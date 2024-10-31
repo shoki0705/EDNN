@@ -18,7 +18,7 @@ import datetime
 
 import experiments.model
 
-
+# コマンドライン引数の設定
 def get_args():
     parser = argparse.ArgumentParser(description=None)
     # network

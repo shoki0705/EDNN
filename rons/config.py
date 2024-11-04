@@ -93,14 +93,6 @@ class Config(object):
         args = parser.parse_args()
         return parser, args
 
-    def _add_basic_config_(self, parser):
-        """add general hyperparameters"""
-        group = parser.add_argument_group('basic')
-        group.add_argument('--proj_dir', type=str, default="checkpoints", 
-            help="path to project folder where models and logs will be saved")
-        group.add_argument('--tag', type=str, default="run", help="name of this experiment")
-        group.add_argument('-g', '--gpu_ids', type=str, default=0, help="gpu to use, e.g. 0  0,1,2. CPU not supported.")
-
 
     def _add_basic_config_(self, parser):
         """add general hyperparameters"""
@@ -116,7 +108,7 @@ class Config(object):
         group.add_argument('--network', type=str, default='siren', choices=['siren', 'grid'])
         group.add_argument('--num_hidden_layers', type=int, default=3)
         group.add_argument('--hidden_features', type=int, default=64)
-        group.add_argument('--nonlinearity',type=str, default='sine')
+        group.add_argument('--nonlinearity',type=str, default='relu')
 
     def _add_training_config_(self, parser):
         """training configuration"""

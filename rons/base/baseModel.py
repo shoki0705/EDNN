@@ -103,6 +103,7 @@ class BaseModel(ABC):
         for p in model.parameters():
             p.requires_grad_(require_grad)
     
+    # 時間ステップのログを保存
     @classmethod
     def _timestepping(cls, func):
         def warp(self):
@@ -111,6 +112,7 @@ class BaseModel(ABC):
             func(self)
             self.save_ckpt()
         return warp
+
 
     @classmethod
     def _training_loop(cls, func):

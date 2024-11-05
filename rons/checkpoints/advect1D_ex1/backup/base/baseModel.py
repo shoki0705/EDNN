@@ -110,7 +110,7 @@ class BaseModel(ABC):
             self.timestep += 1
             self._create_tb(f"t{self.timestep:03d}")
             func(self)
-            self.save_ckpt()++
+            self.save_ckpt()
         return warp
 
 

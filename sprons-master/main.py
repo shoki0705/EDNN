@@ -66,7 +66,7 @@ def get_args():
     args.result_path = f"{args.experiment_dir}/{args.result_dir}/{label}"
     args.path_txt = f"{args.result_path}.txt"
 
-    #print(f"[DEBUG] Arguments: {args}")  # デバッグ用に引数を表示
+    print(f"[DEBUG] Arguments: {args}")  # デバッグ用に引数を表示
     return args
 
 
@@ -75,13 +75,13 @@ def main(args):
     import importlib
 
     dataset = importlib.import_module(f"{args.experiment_dir}.{args.dataset}").Dataset(args.experiment_dir)
-    #print(f"[DEBUG] Dataset loaded: {args.dataset}")  # デバッグ用のメッセージ
+    print(f"[DEBUG] Dataset loaded: {args.dataset}")  # デバッグ用のメッセージ
     x0, u0 = dataset.get_initial_condition()
-    print(f"[DEBUG] Initial condition x0: {x0}, u0: {u0}")  # 初期条件のデバッグ
+    #print(f"[DEBUG] Initial condition x0: {x0}, u0: {u0}")  # 初期条件のデバッグ
     t_range, t_freq, data_x, data_u = dataset.get_evaluation_data()
     print(f"[DEBUG] Evaluation data loaded: t_range: {t_range}, t_freq: {t_freq}")  # 評価データのデバッグ
     
-    return 0
+
 
     ednn = experiments.model.EDNN(
         x_range=dataset.x_range,
@@ -103,6 +103,7 @@ def main(args):
         data_t = np.arange(0, t_range[-1] + t_range[-1] / (t_freq * args.substeps), t_range[-1] / (t_freq * args.substeps))
     print(f"[DEBUG] Time evaluation points: {data_t}")  # 評価時刻のデバッグ
 
+
     logging_file = open(f"{args.result_path}.log", "w")
     logger = lambda *args: print(*args) or print(*args, flush=True, file=logging_file)
 
@@ -110,6 +111,7 @@ def main(args):
     print("[DEBUG] Trainer initialized.")  # トレーナーの初期化デバッグ
     params = trainer.learn_initial_condition(x0, u0, reg=args.ireg, optim=args.optim, lr=args.lr, atol=args.itol, max_itr=args.max_itr)
     print(f"[DEBUG] Initial condition learning parameters: {params}")  # 学習したパラメータのデバッグ
+    return 0
     us, ps = trainer.integrate(params=params, equation=dataset.equation, method=args.method, solver=args.solver, t_eval=data_t, x_eval=data_x, n_eval=args.n_eval, reg=args.preg, atol=args.atol, rtol=args.rtol)
     print(f"[DEBUG] Integration completed. Shapes: us: {us.shape}, ps: {ps.shape}")  # 統合結果のデバッグ
 
@@ -144,8 +146,7 @@ if __name__ == "__main__":
     if args.mark_running:
         try:
             us, ps, error, data_u = main(args)
-        except Exception as e:
-            print(f"[ERROR] Exception occurred: {e}")  # エラー情報を表示
+        except:
             with open(args.path_txt, "w") as of:
                 print("a running trial...failure.", file=of)
             exit(-1)

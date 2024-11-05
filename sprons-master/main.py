@@ -66,7 +66,7 @@ def get_args():
     args.result_path = f"{args.experiment_dir}/{args.result_dir}/{label}"
     args.path_txt = f"{args.result_path}.txt"
 
-    print(f"[DEBUG] Arguments: {args}")  # デバッグ用に引数を表示
+    #print(f"[DEBUG] Arguments: {args}")  # デバッグ用に引数を表示
     return args
 
 
@@ -75,11 +75,13 @@ def main(args):
     import importlib
 
     dataset = importlib.import_module(f"{args.experiment_dir}.{args.dataset}").Dataset(args.experiment_dir)
-    print(f"[DEBUG] Dataset loaded: {args.dataset}")  # デバッグ用のメッセージ
+    #print(f"[DEBUG] Dataset loaded: {args.dataset}")  # デバッグ用のメッセージ
     x0, u0 = dataset.get_initial_condition()
     print(f"[DEBUG] Initial condition x0: {x0}, u0: {u0}")  # 初期条件のデバッグ
     t_range, t_freq, data_x, data_u = dataset.get_evaluation_data()
     print(f"[DEBUG] Evaluation data loaded: t_range: {t_range}, t_freq: {t_freq}")  # 評価データのデバッグ
+    
+    return 0
 
     ednn = experiments.model.EDNN(
         x_range=dataset.x_range,
@@ -114,6 +116,8 @@ def main(args):
     us, ps = us[:: args.substeps].detach().cpu().numpy(), ps[:: args.substeps].detach().cpu().numpy()
     error_course = (us - data_u).__pow__(2).mean(-1).mean(-1)
     print(f"[DEBUG] Error course calculated: {error_course}")  # エラーコースのデバッグ
+    
+  
 
     return us, ps, error_course, data_u
 

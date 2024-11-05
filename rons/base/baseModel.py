@@ -30,36 +30,30 @@ class BaseModel(ABC):
     def _create_network(self, input_dim, output_dim):
         return get_network(self.cfg, input_dim, output_dim).to(self.device)
     
-    
     # ネットワークを辞書形式で返す
     @property
     @abstractmethod
     def _trainable_networks(self):
         raise NotImplementedError
     
-    
     # 学習中にデータポイントをサンプリングする抽象メソッド
     @abstractmethod
     def _sample_in_training(self):
         raise NotImplementedError
-    
     
     # 初期条件(t=0)を学習させる抽象メソッド
     @abstractmethod
     def initialize(self):
         raise NotImplementedError
     
-    
     # タイムステップを進める抽象メソッド
     @abstractmethod
     def step(self):
         raise NotImplementedError
     
-    
     # 出力をファイルに書き込む抽象メソッド
     def write_output(self, output_folder):
         pass
-    
     
     # optimizer, schedulerを作成する
     def _reset_optimizer(self, use_scheduler=True, gamma=0.1, patience=500, min_lr=1e-8):
@@ -74,7 +68,7 @@ class BaseModel(ABC):
         
         # schedulerを用いる場合、ReduceLROnPlateauを初期化
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, factor=gamma, min_lr=min_lr, patience=patience, verbose=True) if use_scheduler else None
-
+    
     
     # TensorBoardのログを作成
     def _create_tb(self, name, overwrite=True):
@@ -91,7 +85,6 @@ class BaseModel(ABC):
             self.tb.close()
         self.tb = SummaryWriter(self.log_path)
 
-
     # ネットワークの重みをback propagationを用いて更新
     def _update_network(self, loss_dict):
         loss = sum(loss_dict.values())  # 損失の合計を計算
@@ -105,12 +98,10 @@ class BaseModel(ABC):
         if self.scheduler is not None:
             self.scheduler.step(loss_dict['main'])
 
-
     # ネットワークの勾配を計算するかどうかを設定
     def _set_require_grads(self, model, require_grad: bool):
         for p in model.parameters():
             p.requires_grad_(require_grad)
-    
     
     # 時間ステップのログを保存
     @classmethod
@@ -119,7 +110,7 @@ class BaseModel(ABC):
             self.timestep += 1
             self._create_tb(f"t{self.timestep:03d}")
             func(self)
-            self.save_ckpt()
+            self.save_ckpt()++
         return warp
 
 

@@ -5,6 +5,7 @@ import torch.nn as nn
 import torchdiffeq
 import torchdyn.numerics
 import datetime
+import matplotlib.pyplot as plt
 
 
 def get_activation_from_name(name):
@@ -152,6 +153,8 @@ class EDNNTrainer(nn.Module):
         self.logger = logger
         self.logger(f"[{datetime.datetime.now()}] EDNN, Initialized: The number of parameters is ", self.ednn.mlp.n_params)
 
+
+
     def learn_initial_condition(self, x0, u0, reg: float = 0.0, optim: str = "adam", lr: float = 1e-3, atol: float = 1e-7, max_itr: int = 1000000):
         self.logger(f"[{datetime.datetime.now()}] EDNN, Learning: IC...")
         assert reg >= 0.0
@@ -163,9 +166,11 @@ class EDNNTrainer(nn.Module):
 
         itr = 0
         optimizer = torch.optim.Adam([params], lr=min(lr, 1e-3), weight_decay=0)
+        
+        # 損失の履歴を保存するリスト
+        loss_history = []
 
         with torch.set_grad_enabled(True):
-
             def closure():
                 nonlocal itr
                 optimizer.zero_grad()
@@ -176,6 +181,9 @@ class EDNNTrainer(nn.Module):
                     self.logger(f"[{datetime.datetime.now()}] EDNN, Learning: {itr:*>7}/{max_itr}, Loss: {loss.item():.6e}")
                 loss.backward()
                 itr += 1
+                
+                # 損失を履歴に追加
+                loss_history.append(loss.item())
                 return loss.item()
 
             if optim.startswith("adam"):
@@ -198,7 +206,24 @@ class EDNNTrainer(nn.Module):
 
         loss = nn.functional.mse_loss(self.ednn(x0, params), u0)
         self.logger(f"[{datetime.datetime.now()}] EDNN, Learning: IC finished, Loss: {loss.item():.6e}")
+
+        # 損失履歴をプロットして保存
+        self.plot_loss_history(loss_history)
+
         return params.data
+
+    def plot_loss_history(self, loss_history):
+        """ 損失履歴をプロットして保存するメソッド """
+        plt.figure(figsize=(10, 6))
+        plt.plot(loss_history, label='Loss', color='blue')
+        plt.title('Loss During Initial Condition Learning')
+        plt.xlabel('Iteration')
+        plt.ylabel('Loss')
+        plt.yscale('log')  # 損失のスケールを対数にすることも可能
+        plt.legend()
+        plt.grid()
+        plt.savefig(f'loss_history.png')  # プロットをファイルに保存
+        plt.close()  # プロットを閉じる
 
     def get_time_derivative(self, equation, params, method, x, reg):
         params = params.flatten()  # remove batch axis added by torchdiffeq

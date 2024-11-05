@@ -140,3 +140,5 @@ class Config(object):
         group.add_argument('-L','--length', type=float, default=4.0, help='field length')
         group.add_argument('--vel', type=float, default=0.25, help='constant velocity value')
 
+    def _add_fluid_config_(self, parser):
+        pass

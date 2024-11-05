@@ -6,4 +6,5 @@ python main.py advection \
     -sr 5000 \
     --dt 0.05 \
     -T 240 \
-    -g 0
+    -g 0 \
+    --vel 0.5

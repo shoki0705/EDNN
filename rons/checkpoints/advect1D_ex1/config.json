@@ -19,5 +19,5 @@
   "n_timesteps": 240,
   "fps": 10,
   "length": 4.0,
-  "vel": 0.25
+  "vel": 0.5
 }

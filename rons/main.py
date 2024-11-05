@@ -4,6 +4,7 @@ from config import Config
 # 実験設定
 cfg = Config("train")
 
+print("start model check")
 # モデルを選択
 if cfg.pde == "advection":
     from advection import Advection1DModel as neuralModel
@@ -15,10 +16,12 @@ else:
     raise NotImplementedError
 model = neuralModel(cfg)
 
+print("complete model check")
+
 # resultsに結果を保存する
 output_folder = os.path.join(cfg.exp_dir, "results")
 os.makedirs(output_folder, exist_ok=True)
-
+print("start time integration")
 # 時間積分
 for t in range(cfg.n_timesteps + 1):
     print(f"time step: {t}")

@@ -79,16 +79,16 @@ class MLP(nn.Module):
 class EDNN(nn.Module):
     def __init__(
         self,
-        x_range,
-        space_dim: int,
-        state_dim: int,
-        hidden_dim: int,
-        n_hidden_layer: int,
-        nonlinearity: str = "tanh",
-        sinusoidal: int = 0,
-        is_periodic_boundary: bool = True,
-        is_zero_boundary: bool = False,
-        space_normalization: bool = True,
+        x_range,    # 空間の範囲
+        space_dim: int,   # 空間の次元
+        state_dim: int,  # 状態の次元
+        hidden_dim: int,    # 隠れ層の次元
+        n_hidden_layer: int,    # 隠れ層の数
+        nonlinearity: str = "tanh",     # 活性化関数
+        sinusoidal: int = 0,    # サイン波の数
+        is_periodic_boundary: bool = True,  # 周期境界条件
+        is_zero_boundary: bool = False, # 境界条件
+        space_normalization: bool = True,   # 空間の正規化
     ):
         super(EDNN, self).__init__()
         assert not (is_periodic_boundary and is_zero_boundary)

@@ -1,4 +1,6 @@
 import scipy
+import scipy.sparse.linalg
+import sys
 import numpy as np
 import torch
 import torch.nn as nn
@@ -6,6 +8,7 @@ import torchdiffeq
 import torchdyn.numerics
 import datetime
 import matplotlib.pyplot as plt
+#from linalg import CG, GMRES
 
 
 def get_activation_from_name(name):
@@ -255,15 +258,25 @@ class EDNNTrainer(nn.Module):
                 J = torch.cat([J, K], dim=1)
             ret = torch.linalg.lstsq(J.cpu(), u_t.cpu(), driver="gelsd")
             deriv = ret.solution.to(device=J.device)
+            
         else:
             # J = J / self.ednn.mlp.n_params
             M = torch.einsum("dki,dkj->dij", (J, J))
             a = torch.einsum("dki,dk->di", (J, u_t))
             if method == "inversion":
                 assert reg == 0.0
-                # numerically unstalbe
+                # numerically unstable
                 M_inv = torch.linalg.inv(M)
                 deriv = torch.einsum("dji,di->dj", (M_inv, a))
+
+                # 1. 逆行列と元の行列の積を表示
+                print("逆行列と元の行列の積 (M @ M_inv):")
+                print(M @ M_inv)
+                
+                # 2. 行列の条件数を表示
+                condition_number = torch.linalg.cond(M)
+                print(f"行列の条件数（最大固有値と最小固有値の比）: {condition_number}")
+
             elif method == "optimization":
                 if reg > 0:
                     a = torch.cat([a, v], dim=1)
@@ -272,6 +285,15 @@ class EDNNTrainer(nn.Module):
                     deriv = ret.solution
                 else:
                     deriv = torch.linalg.solve(M, a)
+                    print(deriv)
+                    
+            elif method == "CG":
+                deriv, info = CG(M,a)
+                
+            elif method == "GMRES":
+                deriv, info = GMRES(M,a)
+                
+                
             else:
                 raise NotImplementedError(method)
 

@@ -1,6 +1,6 @@
 experiments/results
 __pycache__
-*.mat
+#*.mat
 *.png
 runbatc*.*
 log

@@ -55,6 +55,7 @@ def get_args():
     parser.set_defaults(feature=True)
     args = parser.parse_args()
 
+    # 実験設定の識別ラベル
     label = f"{args.dataset}-{args.method}-{args.solver}"
     label += f"-ireg{args.ireg}" if args.ireg > 0 else ""
     label += f"-preg{args.preg}" if args.preg > 0 else ""
@@ -79,16 +80,16 @@ def main(args):
 
     # model
     ednn = experiments.model.EDNN(
-        x_range=dataset.x_range,
-        space_dim=dataset.space_dim,
-        state_dim=dataset.state_dim,
-        hidden_dim=args.hidden_dim,
-        n_hidden_layer=args.n_hidden_layer,
-        nonlinearity=args.act,
-        sinusoidal=args.sinusoidal,
-        is_periodic_boundary=dataset.is_periodic_boundary,
-        is_zero_boundary=dataset.is_zero_boundary,
-        space_normalization=True,
+        x_range=dataset.x_range,    # xの範囲
+        space_dim=dataset.space_dim,    # 空間次元
+        state_dim=dataset.state_dim,    # 状態次元
+        hidden_dim=args.hidden_dim,   # 隠れ層の次元
+        n_hidden_layer=args.n_hidden_layer,   # 隠れ層の数
+        nonlinearity=args.act,  # 活性化関数
+        sinusoidal=args.sinusoidal, # サイン波埋め込み
+        is_periodic_boundary=dataset.is_periodic_boundary,  # 周期境界条件
+        is_zero_boundary=dataset.is_zero_boundary,  # ゼロ境界条件
+        space_normalization=True,   # 空間の正規化
     )
 
     # stream data

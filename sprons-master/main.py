@@ -74,9 +74,10 @@ def main(args):
     import importlib
 
     dataset = importlib.import_module(f"{args.experiment_dir}.{args.dataset}").Dataset(args.experiment_dir)
-    x0, u0 = dataset.get_initial_condition()
-    t_range, t_freq, data_x, data_u = dataset.get_evaluation_data()
+    x0, u0 = dataset.get_initial_condition()    # initial condition
+    t_range, t_freq, data_x, data_u = dataset.get_evaluation_data() # evaluation data
 
+    # model
     ednn = experiments.model.EDNN(
         x_range=dataset.x_range,
         space_dim=dataset.space_dim,
@@ -90,19 +91,27 @@ def main(args):
         space_normalization=True,
     )
 
+    # stream data
     if t_range[1] == int(t_range[1]) and t_freq == int(t_freq):
         data_t = np.linspace(0, t_range[-1], int(t_range[-1] * t_freq * args.substeps + 1))
     else:
         data_t = np.arange(0, t_range[-1] + t_range[-1] / (t_freq * args.substeps), t_range[-1] / (t_freq * args.substeps))
 
+    # logger
     logging_file = open(f"{args.result_path}.log", "w")
     logger = lambda *args: print(*args) or print(*args, flush=True, file=logging_file)
 
+    # training initial condition
     trainer = experiments.model.EDNNTrainer(ednn, log_freq=args.log_freq, logger=logger)
     params = trainer.learn_initial_condition(x0, u0, reg=args.ireg, optim=args.optim, lr=args.lr, atol=args.itol, max_itr=args.max_itr)
+    
+    # integration
     us, ps = trainer.integrate(params=params, equation=dataset.equation, method=args.method, solver=args.solver, t_eval=data_t, x_eval=data_x, n_eval=args.n_eval, reg=args.preg, atol=args.atol, rtol=args.rtol)
 
+    # Move to CPU and numpy
     us, ps = us[:: args.substeps].detach().cpu().numpy(), ps[:: args.substeps].detach().cpu().numpy()
+    
+    # error
     error_course = (us - data_u).__pow__(2).mean(-1).mean(-1)
 
     return us, ps, error_course, data_u
@@ -110,23 +119,32 @@ def main(args):
 
 if __name__ == "__main__":
     args = get_args()
+    
+    # set seed
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
+    # create results directory
     os.makedirs(f"{args.experiment_dir}/{args.result_dir}", exist_ok=True)
+    
+    # check if the trial is already done
     if os.path.exists(args.path_txt):
         if args.noretry:
             print(f"[{datetime.datetime.now()}] Manager: trial already done,", " ".join(sys.argv), flush=True)
             print(args.path_txt)
             exit()
+            
 
+    # mark the trial as running
     if args.mark_running:
         with open(args.path_txt, "w") as of:
             print("a running trial...", file=of)
 
+    # print the trial
     print(f"[{datetime.datetime.now()}] Manager: trial not yet,", " ".join(sys.argv), flush=True)
     print(f"[{datetime.datetime.now()}] Manager: trial entering,", " ".join(sys.argv))
 
+    # run the trial
     if args.mark_running:
         try:
             us, ps, error, data_u = main(args)
@@ -137,8 +155,9 @@ if __name__ == "__main__":
     else:
         us, ps, error, data_u = main(args)
 
-    from PIL import Image
-
+    from PIL import Image   # Python Imaging Library
+    
+    # normalize and save the results
     u_max = data_u.max()
     u_min = data_u.min()
     for i in range(us.shape[-1]):

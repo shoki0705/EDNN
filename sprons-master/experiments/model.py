@@ -8,6 +8,7 @@ import torchdiffeq
 import torchdyn.numerics
 import datetime
 import matplotlib.pyplot as plt
+from siren_pytorch import SirenNet
 #from linalg import CG, GMRES
 
 

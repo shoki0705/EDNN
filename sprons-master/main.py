@@ -25,7 +25,7 @@ def get_args():
     parser.add_argument("--model", default="fc", type=str, help="NN model.")
     parser.add_argument("--hidden_dim", default=30, type=int, help="number of hidden units.")
     parser.add_argument("--n_hidden_layer", default=4, type=int, help="number of hidden layers.")
-    parser.add_argument("--act", default="tanh", type=str, help="activation function.")
+    parser.add_argument("--act", default="tanh", type=str, help="activation function.", choices=["tanh", "sine"])
     parser.add_argument("--sinusoidal", default=0, type=int, help="sinusoidal embedding.")
     # experiments
     parser.add_argument("--ireg", default=0.0, type=float, help="regularizer for parameters in initialization.")

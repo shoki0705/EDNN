@@ -23,9 +23,9 @@ def get_args():
     parser = argparse.ArgumentParser(description=None)
     # network
     parser.add_argument("--model", default="fc", type=str, help="NN model.")
-    parser.add_argument("--hidden_dim", default=30, type=int, help="number of hidden units.")
-    parser.add_argument("--n_hidden_layer", default=4, type=int, help="number of hidden layers.")
-    parser.add_argument("--act", default="tanh", type=str, help="activation function.", choices=["tanh", "sine"])
+    parser.add_argument("--dim_hidden", default=30, type=int, help="number of hidden units.")
+    parser.add_argument("--num_layers", default=4, type=int, help="number of hidden layers.")
+    parser.add_argument("--act", default="sin", type=str, help="activation function.", choices=["tanh", "sin"])
     parser.add_argument("--sinusoidal", default=0, type=int, help="sinusoidal embedding.")
     # experiments
     parser.add_argument("--ireg", default=0.0, type=float, help="regularizer for parameters in initialization.")
@@ -83,8 +83,8 @@ def main(args):
         x_range=dataset.x_range,    # xの範囲
         space_dim=dataset.space_dim,    # 空間次元
         state_dim=dataset.state_dim,    # 状態次元
-        hidden_dim=args.hidden_dim,   # 隠れ層の次元
-        n_hidden_layer=args.n_hidden_layer,   # 隠れ層の数
+        dim_hidden=args.dim_hidden,   # 隠れ層の次元
+        num_layers=args.num_layers,   # 隠れ層の数
         nonlinearity=args.act,  # 活性化関数
         sinusoidal=args.sinusoidal, # サイン波埋め込み
         is_periodic_boundary=dataset.is_periodic_boundary,  # 周期境界条件

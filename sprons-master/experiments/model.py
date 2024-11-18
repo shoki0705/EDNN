@@ -8,14 +8,14 @@ import torchdiffeq
 import torchdyn.numerics
 import datetime
 import matplotlib.pyplot as plt
-from siren_pytorch import SirenNet, Sine
-#from linalg import CG, GMRES
+from tqdm import tqdm
+
 
 
 #   指定された名前の活性化関数を取得
 def get_activation_from_name(name):
-    if name == "sine":
-        return Sine(1.0)
+    if name == "sin":
+        return 
     if hasattr(torch, name):
         return getattr(torch, name)
     if hasattr(nn.functional, name):
@@ -28,11 +28,11 @@ def get_activation_from_name(name):
 #   多層パーセプトロン
 class MLP(nn.Module):
 
-    def __init__(self, input_dim: int, output_dim: int, hidden_dim: int, n_hidden_layer: int, nonlinearity: str):
+    def __init__(self, dim_in: int, dim_out: int, dim_hidden: int, num_layers: int, nonlinearity: str):
         super(MLP, self).__init__()
-        assert hidden_dim > 0   
-        self.units = [input_dim] + [hidden_dim] * n_hidden_layer + [output_dim] # [input, hidden, ..., hidden, output]
-        self.n_params = sum([self.units[i] * self.units[i + 1] + self.units[i + 1] for i in range(n_hidden_layer + 1)]) # number of parameters
+        assert dim_hidden > 0   
+        self.units = [dim_in] + [dim_hidden] * num_layers + [dim_out] # [input, hidden, ..., hidden, output]
+        self.n_params = sum([self.units[i] * self.units[i + 1] + self.units[i + 1] for i in range(num_layers + 1)]) # number of parameters
         self.act = get_activation_from_name(nonlinearity)   # activation function
         self.nonlinearity = nonlinearity    # activation function name
 
@@ -77,20 +77,30 @@ class MLP(nn.Module):
     def get_init_params(self):
         theta = torch.zeros(self.n_params)  # パラメータ数のゼロテンソル
         self.init_params(theta) # パラメータの初期化
+        print("theta", theta)
         return theta
 
     #  順伝播
     def forward(self, x, params):
+        # print("params:", params)
         weights, biases = self.segment_params(params)   # パラメータをweightsとbiasesに分割
+        # print("weights:", weights)
+        # print("biases:", biases)
         with_act = [True] * (len(self.units) - 1) + [False] # 活性化関数の有無
         #  順伝播
-        for w, b, a in zip(weights, biases, with_act):
-            x = nn.functional.linear(x, w, b)   # 線形変換
-            # 活性化関数があれば適用
-            if a:   
-                x = self.act(x)
+        if self.nonlinearity == "sin":
+            for i, (w, b, a) in enumerate(zip(weights, biases, with_act)):
+                x = nn.functional.linear(x, w, b)  # 線形変換
+                if a:  # 活性化関数が必要な場合
+                    w = 30 if i == 0 else 1  # 入力層では w=30、それ以降では w=1
+                    x = torch.sin(w * x)  # サイン活性化関数を適用
+        else:
+            for w, b, a in zip(weights, biases, with_act):
+                x = nn.functional.linear(x, w, b)   # 線形変換
+                # 活性化関数があれば適用
+                if a:   
+                    x = self.act(x)
         return x
-
 
 class EDNN(nn.Module):
     def __init__(
@@ -98,9 +108,9 @@ class EDNN(nn.Module):
         x_range,    # xの範囲
         space_dim: int,   # 空間次元
         state_dim: int,  # 状態次元
-        hidden_dim: int,    # 隠れ層の次元
-        n_hidden_layer: int,    # 隠れ層の数
-        nonlinearity: str = "tanh",   # 活性化関数
+        dim_hidden: int,    # 隠れ層の次元
+        num_layers: int,    # 隠れ層の数
+        nonlinearity: str = "sin",   # 活性化関数
         sinusoidal: int = 0,    # サイン波埋め込み
         is_periodic_boundary: bool = True,  # 周期境界条件
         is_zero_boundary: bool = False, # ゼロ境界条件
@@ -122,10 +132,10 @@ class EDNN(nn.Module):
         self.is_zero_boundary = is_zero_boundary    # ゼロ境界条件
 
         # 入力次元=空間次元 x (2 * サイン波埋め込み)
-        input_dim = space_dim * ((2 * self.sinusoidal) if self.sinusoidal > 0 else 0)
+        dim_in = space_dim * ((2 * self.sinusoidal) if self.sinusoidal > 0 else 0)
         
         # MLPのインスタンス化
-        self.mlp = MLP(input_dim=input_dim, output_dim=state_dim, hidden_dim=hidden_dim, n_hidden_layer=n_hidden_layer, nonlinearity=nonlinearity)
+        self.mlp = MLP(dim_in=dim_in, dim_out=state_dim, dim_hidden=dim_hidden, num_layers=num_layers, nonlinearity=nonlinearity)
 
     def forward(self, x, params):
         # x: batch x [x1,x2,...]
@@ -190,7 +200,6 @@ class EDNNTrainer(nn.Module):
         self.logger(f"[{datetime.datetime.now()}] EDNN, Initialized: The number of parameters is ", self.ednn.mlp.n_params)
 
 
-    #   初期条件の学習
     def learn_initial_condition(self, x0, u0, reg: float = 0.0, optim: str = "adam", lr: float = 1e-3, atol: float = 1e-7, max_itr: int = 1000000):
         self.logger(f"[{datetime.datetime.now()}] EDNN, Learning: IC...")
         assert reg >= 0.0
@@ -210,42 +219,43 @@ class EDNNTrainer(nn.Module):
         # 損失の履歴を保存するリスト
         loss_history = []
 
-        # 最適化
-        with torch.set_grad_enabled(True):
-            def closure():
-                nonlocal itr
-                optimizer.zero_grad()   # 勾配の初期化
-                loss = nn.functional.mse_loss(self.ednn(x0, params), u0)    # 損失の計算
-                if reg > 0.0:
-                    loss = loss + reg * params.__pow__(2).sum() # 正則化項の追加
-                # ログの出力
-                if itr % self.log_freq == 0:
-                    self.logger(f"[{datetime.datetime.now()}] EDNN, Learning: {itr:*>7}/{max_itr}, Loss: {loss.item():.6e}")
-                loss.backward() # 逆伝播
-                itr += 1
-                
-                # 損失を履歴に追加
-                loss_history.append(loss.item())
-                return loss.item()
+        # プログレスバーを設定
+        with tqdm(total=max_itr, desc="Training Progress", unit="step") as pbar:
+            # 最適化
+            with torch.set_grad_enabled(True):
+                def closure():
+                    nonlocal itr
+                    optimizer.zero_grad()   # 勾配の初期化
+                    loss = nn.functional.mse_loss(self.ednn(x0, params), u0)    # 損失の計算
+                    if reg > 0.0:
+                        loss = loss + reg * params.__pow__(2).sum()  # 正則化項の追加
+                    loss.backward()  # 逆伝播
+                    itr += 1
+                    loss_history.append(loss.item())  # 損失を履歴に追加
 
-            # 最適化手法の選択
-            if optim.startswith("adam"):
-                self.logger(f"[{datetime.datetime.now()}] EDNN, Learning: IC by Adam...")
-                while itr < max_itr:
-                    loss = closure()
-                    optimizer.step()
-                    if loss < atol:
-                        break
-            elif optim.startswith("lbfgs"):
-                self.logger(f"[{datetime.datetime.now()}] EDNN, Learning: IC by Adam first...")
-                while itr < max_itr // 10:
-                    loss = closure()
-                    optimizer.step()
-                self.logger(f"[{datetime.datetime.now()}] EDNN, Learning: IC by LBFGS...")
-                optimizer = torch.optim.LBFGS([params], lr=lr, max_iter=max_itr - max_itr // 10, tolerance_grad=atol, tolerance_change=0, history_size=100)
-                optimizer.step(closure)
-            else:
-                raise NotImplementedError(self.optim)
+                    # プログレスバーの更新
+                    pbar.set_postfix(loss=f"{loss.item():.6e}")  # 損失値を表示
+                    pbar.update(1)  # プログレスバーを1ステップ進める
+                    return loss.item()
+
+                # 最適化手法の選択
+                if optim.startswith("adam"):
+                    self.logger(f"[{datetime.datetime.now()}] EDNN, Learning: IC by Adam...")
+                    while itr < max_itr:
+                        loss = closure()
+                        optimizer.step()
+                        if loss < atol:
+                            break
+                elif optim.startswith("lbfgs"):
+                    self.logger(f"[{datetime.datetime.now()}] EDNN, Learning: IC by Adam first...")
+                    while itr < max_itr // 10:
+                        loss = closure()
+                        optimizer.step()
+                    self.logger(f"[{datetime.datetime.now()}] EDNN, Learning: IC by LBFGS...")
+                    optimizer = torch.optim.LBFGS([params], lr=lr, max_iter=max_itr - max_itr // 10, tolerance_grad=atol, tolerance_change=0, history_size=100)
+                    optimizer.step(closure)
+                else:
+                    raise NotImplementedError(self.optim)
 
         loss = nn.functional.mse_loss(self.ednn(x0, params), u0)
         self.logger(f"[{datetime.datetime.now()}] EDNN, Learning: IC finished, Loss: {loss.item():.6e}")
@@ -328,7 +338,6 @@ class EDNNTrainer(nn.Module):
                     deriv = ret.solution
                 else:
                     deriv = torch.linalg.solve(M, a)
-                    print(deriv)
                     
             elif method == "CG":
                 deriv, info = CG(M,a)

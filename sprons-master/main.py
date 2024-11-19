@@ -37,7 +37,7 @@ def get_args():
     parser.add_argument("--lr", default=1, type=float, help="learning rate for initialization.")
     parser.add_argument("--itol", default=1e-9, type=float, help="absolute/gradient tolerance for initialization.")
     # integration
-    parser.add_argument("--method", default="collocation", type=str, help="method to obtain gradient.", choices=["optimization", "inversion", "collocation", "gelsd", "CG"])
+    parser.add_argument("--method", default="gpytorchCG", type=str, help="method to obtain gradient.", choices=["optimization", "inversion", "collocation", "gelsd", "CG", "GMRES", "gpytorchCG", "PreCG"])
     parser.add_argument("--solver", default="rk4", type=str, help="numerical integrator.")
     parser.add_argument("--n_eval", default=0, type=int, help="number of collocation points for solver. Set 0 to use the default points.")
     parser.add_argument("--atol", default=1e-3, type=float, help="absolute tolerance for solver.")

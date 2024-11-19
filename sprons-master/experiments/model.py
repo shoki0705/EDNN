@@ -12,6 +12,7 @@ from tqdm import tqdm
 
 
 
+
 #   指定された名前の活性化関数を取得
 def get_activation_from_name(name):
     if name == "sin":
@@ -340,7 +341,7 @@ class EDNNTrainer(nn.Module):
                     deriv = torch.linalg.solve(M, a)
                     
             elif method == "CG":
-                        # 共役勾配法 (Conjugate Gradient Method) を用いて最小二乗法 J^T J @ deriv = J^T u_t を解く。
+                # 共役勾配法 (Conjugate Gradient Method) を用いて最小二乗法 J^T J @ deriv = J^T u_t を解く。
                 
                 # パラメータ:
                     # tol (float): 収束の許容誤差。
@@ -379,7 +380,51 @@ class EDNNTrainer(nn.Module):
                     beta = rs_new / rs_old
                     p = r + beta.unsqueeze(-1) * p  # 共役方向を更新
                     rs_old = rs_new
-                                
+            
+            elif method == "gpytorchCG":
+                from linear_operator.utils.linear_cg import linear_cg
+
+                # ヤコビアンの積を計算するクロージャを定義
+                def matmul_closure(v):
+                    """
+                    M @ v を計算するクロージャ
+                    """
+                    return torch.einsum("dij,dj->di", (M, v))
+
+                # GPyTorchのlinear_cgを用いて解を計算
+                max_iter = 1000
+                tol = 1e-6
+
+                deriv = linear_cg(matmul_closure, a, tolerance=tol, max_iter=max_iter)
+                
+            elif method == "PreCG":
+                from linear_operator.utils.linear_cg import linear_cg
+
+                # ヤコビアンの積を計算するクロージャを定義
+                def matmul_closure(v):
+                    """
+                    M @ v を計算するクロージャ
+                    """
+                    return torch.einsum("dij,dj->di", (M, v))
+
+                # プリコンディショナーを計算するクロージャ
+                def preconditioner_closure(v):
+                    """
+                    P^{-1} @ v を計算するクロージャ
+                    """
+                    # 対角プリコンディショナーとして M の対角成分を使用
+                    diag = torch.einsum("dii->di", M)  # M の対角成分
+                    P_inv = 1.0 / diag  # 対角成分の逆数
+                    return P_inv * v  # 前処理を適用したベクトルを返す
+
+                # GPyTorchのlinear_cgを用いて解を計算
+                max_iter = 1000
+                tol = 1e-6
+
+                # プリコンディショナー付き共役勾配法
+                deriv = linear_cg(matmul_closure, a, tolerance=tol, max_iter=max_iter, preconditioner=preconditioner_closure)
+
+                                            
             else:
                 raise NotImplementedError(method)
 

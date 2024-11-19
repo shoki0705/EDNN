@@ -25,8 +25,8 @@ def get_args():
     parser.add_argument("--model", default="fc", type=str, help="NN model.")
     parser.add_argument("--dim_hidden", default=30, type=int, help="number of hidden units.")
     parser.add_argument("--num_layers", default=4, type=int, help="number of hidden layers.")
-    parser.add_argument("--act", default="sin", type=str, help="activation function.", choices=["tanh", "sin"])
-    parser.add_argument("--sinusoidal", default=0, type=int, help="sinusoidal embedding.")
+    parser.add_argument("--act", default="sin", type=str, help="activation function.", choices=["tanh", "sin", "silu", "relu"])
+    parser.add_argument("--sinusoidal", default=1, type=int, help="sinusoidal embedding.")
     # experiments
     parser.add_argument("--ireg", default=0.0, type=float, help="regularizer for parameters in initialization.")
     parser.add_argument("--preg", default=0.0, type=float, help="regularizer for parameters in prediction.")
@@ -37,7 +37,7 @@ def get_args():
     parser.add_argument("--lr", default=1, type=float, help="learning rate for initialization.")
     parser.add_argument("--itol", default=1e-9, type=float, help="absolute/gradient tolerance for initialization.")
     # integration
-    parser.add_argument("--method", default="collocation", type=str, help="method to obtain gradient.", choices=["optimization", "inversion", "collocation", "gelsd", "CG", "GMRES"])
+    parser.add_argument("--method", default="collocation", type=str, help="method to obtain gradient.", choices=["optimization", "inversion", "collocation", "gelsd", "CG"])
     parser.add_argument("--solver", default="rk4", type=str, help="numerical integrator.")
     parser.add_argument("--n_eval", default=0, type=int, help="number of collocation points for solver. Set 0 to use the default points.")
     parser.add_argument("--atol", default=1e-3, type=float, help="absolute tolerance for solver.")

@@ -340,12 +340,46 @@ class EDNNTrainer(nn.Module):
                     deriv = torch.linalg.solve(M, a)
                     
             elif method == "CG":
-                deriv, info = CG(M,a)
+                        # 共役勾配法 (Conjugate Gradient Method) を用いて最小二乗法 J^T J @ deriv = J^T u_t を解く。
                 
-            elif method == "GMRES":
-                deriv, info = GMRES(M,a)
-                
-                
+                # パラメータ:
+                    # tol (float): 収束の許容誤差。
+                    # max_iter (int): 最大反復回数。
+
+                # 戻り値:
+                    # deriv (torch.Tensor): 解ベクトル (形状: [dim(params), batch])。
+
+                # 初期化
+                deriv = torch.zeros_like(a)  # 解の初期値
+                max_iter = 1000
+                tol = 1e-6
+                r = a - torch.einsum("dij,dj->di", (M, deriv))  # 残差ベクトル
+                p = r.clone()  # 共役方向の初期値
+                rs_old = torch.einsum("di,di->d", r, r)  # 残差の内積
+
+                for _ in range(max_iter):
+                    # p に対する M の積を計算
+                    Mp = torch.einsum("dij,dj->di", (M, p))
+                    
+                    # アルファ係数の計算
+                    alpha = rs_old / torch.einsum("di,di->d", p, Mp)
+                    
+                    # 解を更新
+                    deriv += alpha.unsqueeze(-1) * p
+
+                    # 残差を更新
+                    r -= alpha.unsqueeze(-1) * Mp
+
+                    # 残差のノルムが収束条件を満たした場合終了
+                    rs_new = torch.einsum("di,di->d", r, r)
+                    if torch.sqrt(rs_new).max() < tol:
+                        break
+
+                    # ベータ係数の計算
+                    beta = rs_new / rs_old
+                    p = r + beta.unsqueeze(-1) * p  # 共役方向を更新
+                    rs_old = rs_new
+                                
             else:
                 raise NotImplementedError(method)
 
@@ -405,3 +439,45 @@ class EDNNTrainer(nn.Module):
         if solver == "rk45":
             return "dopri5"
         return solver
+
+    def CG(M, a, tol=1e-6, max_iter=1000):
+    
+        # 共役勾配法 (Conjugate Gradient Method) を用いて最小二乗法 J^T J @ deriv = J^T u_t を解く。
+        
+        # パラメータ:
+            # tol (float): 収束の許容誤差。
+            # max_iter (int): 最大反復回数。
+
+        # 戻り値:
+            # deriv (torch.Tensor): 解ベクトル (形状: [dim(params), batch])。
+
+        # 初期化
+        deriv = torch.zeros_like(a)  # 解の初期値
+        r = a - torch.einsum("dij,dj->di", (M, deriv))  # 残差ベクトル
+        p = r.clone()  # 共役方向の初期値
+        rs_old = torch.einsum("di,di->d", r, r)  # 残差の内積
+
+        for _ in range(max_iter):
+            # p に対する M の積を計算
+            Mp = torch.einsum("dij,dj->di", (M, p))
+            
+            # アルファ係数の計算
+            alpha = rs_old / torch.einsum("di,di->d", p, Mp)
+            
+            # 解を更新
+            deriv += alpha.unsqueeze(-1) * p
+
+            # 残差を更新
+            r -= alpha.unsqueeze(-1) * Mp
+
+            # 残差のノルムが収束条件を満たした場合終了
+            rs_new = torch.einsum("di,di->d", r, r)
+            if torch.sqrt(rs_new).max() < tol:
+                break
+
+            # ベータ係数の計算
+            beta = rs_new / rs_old
+            p = r + beta.unsqueeze(-1) * p  # 共役方向を更新
+            rs_old = rs_new
+
+        return deriv

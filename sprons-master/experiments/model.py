@@ -92,8 +92,8 @@ class MLP(nn.Module):
         if self.nonlinearity == "sin":
             for i, (w, b, a) in enumerate(zip(weights, biases, with_act)):
                 x = nn.functional.linear(x, w, b)  # 線形変換
-                if a:  # 活性化関数が必要な場合
-                    w = 30 if i == 0 else 1  # 入力層では w=30、それ以降では w=1
+                if a:
+                    w = 30 if i == 0 else 1  # 入力層では w=30、隠れ層では w=1
                     x = torch.sin(w * x)  # サイン活性化関数を適用
         else:
             for w, b, a in zip(weights, biases, with_act):
@@ -117,7 +117,7 @@ class EDNN(nn.Module):
         is_zero_boundary: bool = False, # ゼロ境界条件
         space_normalization: bool = True,   # 空間の正規化
     ):
-        super(EDNN, self).__init__()    # 親クラスのコンストラクタ
+        super(EDNN, self).__init__()    # 親コンストラクタ
         assert not (is_periodic_boundary and is_zero_boundary)  # 周期境界条件とゼロ境界条件は同時に指定できない
         assert not is_periodic_boundary or space_normalization  # 周期境界条件 -> 空間の正規化
 
@@ -344,6 +344,10 @@ class EDNNTrainer(nn.Module):
                 # 共役勾配法 (Conjugate Gradient Method) を用いて最小二乗法 J^T J @ deriv = J^T u_t を解く。
                 
                 # パラメータ:
+                    # J (torch.Tensor): ヤコビ行列 (形状: [dim(u), dim(params), batch])
+                    # u_t (torch.Tensor): u_t (形状: [dim(u), batch])
+                    # a (torch.Tensor): J^T @ u_t (形状: [dim(params), batch])
+                    # M (torch.Tensor): J^T @ J (形状: [dim(params), dim(params), batch])
                     # tol (float): 収束の許容誤差。
                     # max_iter (int): 最大反復回数。
 

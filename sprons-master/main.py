@@ -27,6 +27,7 @@ def get_args():
     parser.add_argument("--num_layers", default=4, type=int, help="number of hidden layers.")
     parser.add_argument("--act", default="sin", type=str, help="activation function.", choices=["tanh", "sin", "silu", "relu"])
     parser.add_argument("--sinusoidal", default=5, type=int, help="sinusoidal embedding.")
+    parser.add_argument("--head_tuning", default=True, type=bool, help="head tuning.")
     # experiments
     parser.add_argument("--ireg", default=0.0, type=float, help="regularizer for parameters in initialization.")
     parser.add_argument("--preg", default=0.0, type=float, help="regularizer for parameters in prediction.")
@@ -36,6 +37,8 @@ def get_args():
     parser.add_argument("--max_itr", default=10000, type=int, help="number of iterations for initialization.")
     parser.add_argument("--lr", default=1, type=float, help="learning rate for initialization.")
     parser.add_argument("--itol", default=1e-9, type=float, help="absolute/gradient tolerance for initialization.")
+    parser.add_argument("--hreg", default=0.0, type=float, help="regularizer for parameters in head tuning.")
+    parser.add_argument("--h_eval", default=1000, type=int, help="number of evaluations for head tuning.")
     # integration
     parser.add_argument("--method", default="PreCG", type=str, help="method to obtain gradient.", choices=["optimization", "inversion", "collocation", "gelsd", "CG", "gpytorchCG", "PreCG", "GMRES"])
     parser.add_argument("--solver", default="rk4", type=str, help="numerical integrator.")
@@ -105,6 +108,10 @@ def main(args):
     # training initial condition
     trainer = experiments.model.EDNNTrainer(ednn, log_freq=args.log_freq, logger=logger)
     params = trainer.learn_initial_condition(x0, u0, reg=args.ireg, optim=args.optim, lr=args.lr, atol=args.itol, max_itr=args.max_itr)
+    
+    # Head Tuning
+    if args.head_tuning:
+        params = trainer.head_tuning(params, dataset.equation, n_eval = args.h_eval, reg = args.hreg)
     
     # integration
     us, ps = trainer.integrate(params=params, equation=dataset.equation, method=args.method, solver=args.solver, t_eval=data_t, x_eval=data_x, n_eval=args.n_eval, reg=args.preg, atol=args.atol, rtol=args.rtol)

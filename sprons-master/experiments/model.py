@@ -102,6 +102,34 @@ class MLP(nn.Module):
                 if a:   
                     x = self.act(x)
         return x
+    
+    # 中間層の出力を取得
+    def get_hidden_outputs(self, x, params):
+        """
+        入力 x に対する中間層の出力を順に取得し、最終層への入力を返す。
+
+        :param x: 入力データ (バッチサイズ x 入力次元)
+        :param params: ネットワークのパラメータ
+        :return: 中間層の出力リスト
+        """
+        weights, biases = self.segment_params(params)
+        with_act = [True] * (len(self.units) - 1) + [False] # 活性化関数の有無
+        hidden_outputs = []  # 中間層の出力を格納
+        for i, (w, b) in enumerate(zip(weights[:-1], biases[:-1], with_act)):  # 最終層は除外
+            x = nn.functional.linear(x, w, b)  # 線形変換
+            if a:
+                w = 30 if i == 0 else 1  # 入力層では w=30、隠れ層では w=1
+                x = torch.sin(w * x)  # サイン活性化関数を適用
+            else:
+                for w, b, a in zip(weights[:-1], biases[:-1], with_act):
+                    x = nn.functional.linear(x, w, b)   # 線形変換
+                    # 活性化関数があれば適用
+                if a:   
+                    x = self.act(x)
+        return hidden_outputs
+    
+    
+    
 
 class EDNN(nn.Module):
     def __init__(
@@ -265,6 +293,9 @@ class EDNNTrainer(nn.Module):
         self.plot_loss_history(loss_history)
 
         return params.data
+    
+    
+    
 
     def plot_loss_history(self, loss_history):
         """ 損失履歴をプロットして保存するメソッド """
@@ -278,6 +309,38 @@ class EDNNTrainer(nn.Module):
         plt.grid()
         plt.savefig(f'loss_history.png')  # プロットをファイルに保存
         plt.close()  # プロットを閉じる
+
+    def head_tuning(self, params, equation, n_eval, reg: float = 0.0):
+        theta = torch.clone(params)
+        x_eval = self.ednn.get_random_sampling_points(n_eval).to(device=self.device, dtype=self.dtype)
+        Phi = self.construct_features(x_eval, theta)
+        print("complete head tuning")
+        return theta
+        
+    def construct_features(self, x_eval, params):
+        """
+        入力 x_eval に対するニューラルネットワークの隠れ層の出力を計算
+
+        :param x_eval: 入力データ (N, d)
+        :param params: ニューラルネットワークのパラメータ
+        :return: 隠れ層の出力 (N, feature_dim)
+        """
+        def phi(x):
+            """
+            単一入力 x に対する隠れ層の出力を計算
+            :param x: 単一の入力データ (d,)
+            :return: 隠れ層の出力 (feature_dim,)
+            """
+            # ネットワークから中間層の出力を取得 (最終層を無視)
+            hidden_features, _ = self.ednn(params, x, feats_only=True)
+            return hidden_features
+
+        # すべての入力データに対して中間層の出力を計算
+        Phi = torch.vmap(phi)(x_eval)
+
+        return Phi
+
+        
 
     #   時間微分の計算
     def get_time_derivative(self, equation, params, method, x, reg):

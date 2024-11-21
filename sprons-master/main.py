@@ -111,7 +111,7 @@ def main(args):
     
     # Head Tuning
     if args.head_tuning:
-        params = trainer.head_tuning(params, dataset.equation, n_eval = args.h_eval, reg = args.hreg)
+        params = trainer.head_tuning(params, x0, u0, args.hreg)
     
     # integration
     us, ps = trainer.integrate(params=params, equation=dataset.equation, method=args.method, solver=args.solver, t_eval=data_t, x_eval=data_x, n_eval=args.n_eval, reg=args.preg, atol=args.atol, rtol=args.rtol)

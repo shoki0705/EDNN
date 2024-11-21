@@ -9,6 +9,7 @@ import torchdyn.numerics
 import datetime
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+from torchvision.models.feature_extraction import create_feature_extractor
 
 
 
@@ -36,6 +37,7 @@ class MLP(nn.Module):
         self.n_params = sum([self.units[i] * self.units[i + 1] + self.units[i + 1] for i in range(num_layers + 1)]) # number of parameters
         self.act = get_activation_from_name(nonlinearity)   # activation function
         self.nonlinearity = nonlinearity    # activation function name
+        self.num_layers = num_layers    # number of layers
 
     #   パラメータをweightsとbiasesに分割
     def segment_params(self, params):
@@ -81,54 +83,41 @@ class MLP(nn.Module):
         print("theta", theta)
         return theta
 
-    #  順伝播
-    def forward(self, x, params):
-        # print("params:", params)
-        weights, biases = self.segment_params(params)   # パラメータをweightsとbiasesに分割
-        # print("weights:", weights)
-        # print("biases:", biases)
-        with_act = [True] * (len(self.units) - 1) + [False] # 活性化関数の有無
-        #  順伝播
+    # 順伝播
+    def forward(self, x, params, hidden=False):
+        weights, biases = self.segment_params(params)  # パラメータをweightsとbiasesに分割
+        with_act = [True] * (len(self.units) - 1) + [False]  # 活性化関数の有無
+        
+        # 最終層への入力を保持する変数
+        final_layer_input = None
+
+        # 順伝播
         if self.nonlinearity == "sin":
             for i, (w, b, a) in enumerate(zip(weights, biases, with_act)):
                 x = nn.functional.linear(x, w, b)  # 線形変換
                 if a:
                     w = 30 if i == 0 else 1  # 入力層では w=30、隠れ層では w=1
                     x = torch.sin(w * x)  # サイン活性化関数を適用
+                # 最終層への入力を記録
+                if i == len(weights) - 2 and hidden:
+                    final_layer_input = x.clone()
         else:
-            for w, b, a in zip(weights, biases, with_act):
-                x = nn.functional.linear(x, w, b)   # 線形変換
+            for i, (w, b, a) in enumerate(zip(weights, biases, with_act)):
+                x = nn.functional.linear(x, w, b)  # 線形変換
                 # 活性化関数があれば適用
-                if a:   
+                if a:
                     x = self.act(x)
+                # 最終層への入力を記録
+                if i == len(weights) - 2 and hidden:
+                    final_layer_input = x.clone()
+        
+        # hidden=Trueの場合は最終層への入力を返す
+        if hidden:
+            return final_layer_input
+        
+        # 通常の順伝播の出力を返す
         return x
-    
-    # 中間層の出力を取得
-    def get_hidden_outputs(self, x, params):
-        """
-        入力 x に対する中間層の出力を順に取得し、最終層への入力を返す。
 
-        :param x: 入力データ (バッチサイズ x 入力次元)
-        :param params: ネットワークのパラメータ
-        :return: 中間層の出力リスト
-        """
-        weights, biases = self.segment_params(params)
-        with_act = [True] * (len(self.units) - 1) + [False] # 活性化関数の有無
-        hidden_outputs = []  # 中間層の出力を格納
-        for i, (w, b) in enumerate(zip(weights[:-1], biases[:-1], with_act)):  # 最終層は除外
-            x = nn.functional.linear(x, w, b)  # 線形変換
-            if a:
-                w = 30 if i == 0 else 1  # 入力層では w=30、隠れ層では w=1
-                x = torch.sin(w * x)  # サイン活性化関数を適用
-            else:
-                for w, b, a in zip(weights[:-1], biases[:-1], with_act):
-                    x = nn.functional.linear(x, w, b)   # 線形変換
-                    # 活性化関数があれば適用
-                if a:   
-                    x = self.act(x)
-        return hidden_outputs
-    
-    
     
 
 class EDNN(nn.Module):
@@ -151,6 +140,7 @@ class EDNN(nn.Module):
 
         # x_range: [x1,x2,...] x [min, max]
         self.x_range = torch.from_numpy(x_range)    # xの範囲
+        self.space_dim = space_dim  # 空間次元
         self.space_normalization = space_normalization  # 空間の正規化
         self.sinusoidal = sinusoidal    # サイン波埋め込み
         self.is_periodic_boundary = is_periodic_boundary    # 周期境界条件
@@ -166,7 +156,7 @@ class EDNN(nn.Module):
         # MLPのインスタンス化
         self.mlp = MLP(dim_in=dim_in, dim_out=state_dim, dim_hidden=dim_hidden, num_layers=num_layers, nonlinearity=nonlinearity)
 
-    def forward(self, x, params):
+    def forward(self, x, params, hidden=False):
         # x: batch x [x1,x2,...]
         x_norm = x  # xの正規化
         x_range = self.x_range.to(device=x.device, dtype=x.dtype)   # xの範囲
@@ -191,7 +181,7 @@ class EDNN(nn.Module):
                 x_range = x_range.tile(2 * self.sinusoidal).view(len(x_range), 2, 2 * self.sinusoidal).transpose(0, 1).reshape(len(x_range) * 2 * self.sinusoidal, 2)
 
         # MLPにx_normとparamsを入力し、出力uを取得
-        u = self.mlp(x_norm, params)
+        u = self.mlp(x_norm, params, hidden)
 
         # ゼロ境界条件の場合
         if self.is_zero_boundary:
@@ -199,9 +189,6 @@ class EDNN(nn.Module):
             u = u * 4 * x_pos * (1 - x_pos)  # u=0 at boundary
 
         return u
-
-    def u_t(self, x):
-        pass
 
     #  ランダムサンプリング点の取得
     def get_random_sampling_points(self, N):
@@ -291,12 +278,11 @@ class EDNNTrainer(nn.Module):
 
         # 損失履歴をプロットして保存
         self.plot_loss_history(loss_history)
-
+        
         return params.data
     
     
     
-
     def plot_loss_history(self, loss_history):
         """ 損失履歴をプロットして保存するメソッド """
         plt.figure(figsize=(10, 6))
@@ -310,37 +296,73 @@ class EDNNTrainer(nn.Module):
         plt.savefig(f'loss_history.png')  # プロットをファイルに保存
         plt.close()  # プロットを閉じる
 
-    def head_tuning(self, params, equation, n_eval, reg: float = 0.0):
-        theta = torch.clone(params)
-        x_eval = self.ednn.get_random_sampling_points(n_eval).to(device=self.device, dtype=self.dtype)
-        Phi = self.construct_features(x_eval, theta)
-        print("complete head tuning")
-        return theta
-        
-    def construct_features(self, x_eval, params):
+
+    def solve_head(self, phi_theta, u0, reg: float = 1e-5):
         """
-        入力 x_eval に対するニューラルネットワークの隠れ層の出力を計算
+        最小二乗問題を解き、最終層の重みとバイアスを計算する。
 
-        :param x_eval: 入力データ (N, d)
-        :param params: ニューラルネットワークのパラメータ
-        :return: 隠れ層の出力 (N, feature_dim)
+        :param phi_theta: 最終層への入力 (n_eval, feature_dim)
+        :param u0: 真の出力データ (n_eval,)
+        :param reg: 正則化項の係数
+        :return: 最終層の重み w とバイアス b
         """
-        def phi(x):
-            """
-            単一入力 x に対する隠れ層の出力を計算
-            :param x: 単一の入力データ (d,)
-            :return: 隠れ層の出力 (feature_dim,)
-            """
-            # ネットワークから中間層の出力を取得 (最終層を無視)
-            hidden_features, _ = self.ednn(params, x, feats_only=True)
-            return hidden_features
+        n_eval = phi_theta.shape[0]
+        n_features = phi_theta.shape[1]
 
-        # すべての入力データに対して中間層の出力を計算
-        Phi = torch.vmap(phi)(x_eval)
+        # 入力行列 Phi を構築し、正則化行列を設定
+        Phi = torch.cat([phi_theta, torch.ones(n_eval, 1, device=self.device, dtype=self.dtype)], dim=1)  # (n_eval, feature_dim+1)
+        reg_matrix = reg * torch.eye(n_features + 1, device=self.device, dtype=self.dtype)  # 正則化行列
 
-        return Phi
+        # 正規方程式を解く
+        A = Phi.T @ Phi + reg_matrix  # \mathbf{A} = \Phi^T \Phi + \lambda I
+        b = Phi.T @ u0  # \mathbf{b} = \Phi^T \mathbf{u}
 
+        # \mathbf{w} = \mathbf{A}^{-1} \mathbf{b}
+        w_b = torch.linalg.solve(A, b)  # 最小二乗解を計算
+
+        # 重みとバイアスを分割
+        w = w_b[:-1]  # 最終層の重み
+        b = w_b[-1]   # 最終層のバイアス
+
+        return w, b, Phi, w_b
+
+
+    def head_tuning(self, params, x0, u0, reg: float = 1e-5):
+        """
+        最終層（ヘッド）のパラメータを調整する。
+
+        :param params: 現在のネットワークのパラメータ
+        :param x0: 入力データ
+        :param u0: 真の出力データ
+        :param reg: 正則化項の係数
+        :return: 更新されたパラメータ
+        """
+        self.logger(f"[{datetime.datetime.now()}] EDNN, Head tuning started...")
+
+        # 入力データをテンソルに変換し、デバイスに転送
+        x0 = torch.from_numpy(x0).to(device=self.device, dtype=self.dtype)
+        u0 = torch.from_numpy(u0).to(device=self.device, dtype=self.dtype)
+
+        # 中間層の出力を取得（最終層への入力）
+        with torch.no_grad():
+            phi_theta = self.ednn(x0, params, hidden=True)  # (n_eval, feature_dim)
+
+        # 最小二乗問題を解く
+        w, b, Phi, w_b = self.solve_head(phi_theta, u0, reg)  # 重みとバイアスを計算
+
+        # パラメータに反映
+        weights, biases = self.ednn.mlp.segment_params(params)
+        weights[-1].copy_(w.view_as(weights[-1]))  # 重みを更新
+        biases[-1].copy_(b)  # バイアスを更新
+
+        # 最終的な損失を計算
+        predicted_u0 = Phi @ w_b  # 推定された出力
+        final_loss = nn.functional.mse_loss(predicted_u0, u0)  # MSE損失
+
+        self.logger(f"[{datetime.datetime.now()}] EDNN, Head tuning finished. Final Loss: {final_loss.item():.6e}")
         
+        return params
+
 
     #   時間微分の計算
     def get_time_derivative(self, equation, params, method, x, reg):

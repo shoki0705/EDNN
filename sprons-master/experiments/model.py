@@ -490,6 +490,8 @@ class EDNNTrainer(nn.Module):
                 
             elif method == "PreCG":
                 from linear_operator.utils.linear_cg import linear_cg
+                subspace_rank=100
+                reg=1e-6
 
                 # ヤコビアンの積を計算するクロージャを定義
                 def matmul_closure(v):
@@ -500,13 +502,9 @@ class EDNNTrainer(nn.Module):
 
                 # プリコンディショナーを計算するクロージャ
                 def preconditioner_closure(v):
-                    """
-                    P^{-1} @ v を計算するクロージャ
-                    """
-                    # 対角プリコンディショナーとして M の対角成分を使用
-                    diag = torch.einsum("dii->di", M)  # M の対角成分
-                    P_inv = 1.0 / diag  # 対角成分の逆数
-                    return P_inv * v  # 前処理を適用したベクトルを返す
+                    P = self.compute_nystrom_preconditioner(M, subspace_rank, reg)
+                    return torch.einsum("dij,dj->di", (P, v))
+
 
                 # GPyTorchのlinear_cgを用いて解を計算
                 max_iter = 1000
@@ -520,6 +518,48 @@ class EDNNTrainer(nn.Module):
                 raise NotImplementedError(method)
 
         return deriv
+
+    def compute_nystrom_preconditioner(self, M, subspace_rank=100, reg=1e-6):
+        """
+        ランダム化Nystromプリコンディショナーを構築
+        
+        Args:
+            M (torch.Tensor): 元の行列 (d, d)。
+            subspace_rank (int): サブスペースのランク ℓ。
+            reg (float): 正則化項 ν。
+        
+        Returns:
+            torch.Tensor: プリコンディショナー行列 P。
+        """
+        d = M.shape[0]  # 行列の次元
+        l = min(subspace_rank, d)  # ランク ℓ は d を超えない
+
+        # ランダムなガウス射影行列 Ω ∈ R^(d x ℓ) を生成
+        Omega = torch.randn(d, l, device=M.device, dtype=M.dtype)
+
+        # Nystrom 近似 Mnys を構築
+        M_Omega = M @ Omega  # (d, ℓ)
+        Omega_M_Omega = Omega.T @ M_Omega  # (ℓ, ℓ)
+
+        # Cholesky 分解と逆行列の計算
+        try:
+            inv_Omega_M_Omega = torch.linalg.inv(Omega_M_Omega + reg * torch.eye(l, device=M.device, dtype=M.dtype))
+        except RuntimeError:
+            raise ValueError("Cholesky decomposition failed. Check M and subspace rank.")
+
+        # Nystrom 近似行列 Mnys
+        Mnys = M_Omega @ inv_Omega_M_Omega @ M_Omega.T  # (d, d)
+
+        # 固有値分解 (SVD)
+        U, S, _ = torch.linalg.svd(Mnys)
+
+        # プリコンディショナーを構築
+        Lambda_inv = torch.diag_embed(1 / (S + reg))  # 正則化された固有値の逆数
+        P = U @ Lambda_inv @ U.T + torch.eye(d, device=M.device, dtype=M.dtype) - U @ U.T
+
+        return P
+
+
 
     # モデルの再学習
     def retraining(self, params_pre, reg: float = 0.0, optim: str = "adam", lr: float = 1e-3, atol: float = 1e-7, max_itr: int = 1000000):
@@ -596,7 +636,7 @@ class EDNNTrainer(nn.Module):
         if self.nfe % self.restart_fleq == 0:
             print("state_shape", state.shape)
             params_pre = state.reshape(self.params_shape)
-            params_new = self.retraining(params_pre, reg=0.0, optim="adam", lr=1e-3, atol=1e-7, max_itr=50000)
+            params_new = self.retraining(params_pre, reg=0.0, optim="adam", lr=1e-3, atol=1e-10, max_itr=50000)
             state = params_new.reshape(1, -1)
         
         equation = self.integration_params["equation"]

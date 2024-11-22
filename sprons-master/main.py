@@ -27,7 +27,7 @@ def get_args():
     parser.add_argument("--num_layers", default=4, type=int, help="number of hidden layers.")
     parser.add_argument("--act", default="sin", type=str, help="activation function.", choices=["tanh", "sin", "silu", "relu"])
     parser.add_argument("--sinusoidal", default=5, type=int, help="sinusoidal embedding.")
-    parser.add_argument("--head_tuning", default=True, type=bool, help="head tuning.")
+    parser.add_argument("--head_tuning", default=1, type=int, help="head tuning.", choices=[0, 1])
     # experiments
     parser.add_argument("--ireg", default=0.0, type=float, help="regularizer for parameters in initialization.")
     parser.add_argument("--preg", default=0.0, type=float, help="regularizer for parameters in prediction.")
@@ -37,8 +37,7 @@ def get_args():
     parser.add_argument("--max_itr", default=10000, type=int, help="number of iterations for initialization.")
     parser.add_argument("--lr", default=1, type=float, help="learning rate for initialization.")
     parser.add_argument("--itol", default=1e-9, type=float, help="absolute/gradient tolerance for initialization.")
-    parser.add_argument("--hreg", default=0.0, type=float, help="regularizer for parameters in head tuning.")
-    parser.add_argument("--h_eval", default=1000, type=int, help="number of evaluations for head tuning.")
+    parser.add_argument("--hreg", default=0, type=float, help="regularizer for parameters in head tuning.")
     # integration
     parser.add_argument("--method", default="PreCG", type=str, help="method to obtain gradient.", choices=["optimization", "inversion", "collocation", "gelsd", "CG", "gpytorchCG", "PreCG", "GMRES"])
     parser.add_argument("--solver", default="rk4", type=str, help="numerical integrator.")
@@ -46,6 +45,7 @@ def get_args():
     parser.add_argument("--atol", default=1e-3, type=float, help="absolute tolerance for solver.")
     parser.add_argument("--rtol", default=1e-3, type=float, help="relative tolerance for solver.")
     parser.add_argument("--substeps", default=50, type=int, help="number of substeps for solver.")
+    parser.add_argument("--restart_fleq",default=400, type=int, help="restart frequency for EDNN.")
     # display
     parser.add_argument("--log_freq", default=200, type=int, help="number of steps between prints.")
     parser.add_argument("--verbose", dest="verbose", action="store_true", help="verbose?.")
@@ -80,7 +80,7 @@ def main(args):
     dataset = importlib.import_module(f"{args.experiment_dir}.{args.dataset}").Dataset(args.experiment_dir)
     x0, u0 = dataset.get_initial_condition()    # initial condition
     t_range, t_freq, data_x, data_u = dataset.get_evaluation_data() # evaluation data
-
+    
     # model
     ednn = experiments.model.EDNN(
         x_range=dataset.x_range,    # xの範囲
@@ -106,7 +106,7 @@ def main(args):
     logger = lambda *args: print(*args) or print(*args, flush=True, file=logging_file)
 
     # training initial condition
-    trainer = experiments.model.EDNNTrainer(ednn, log_freq=args.log_freq, logger=logger)
+    trainer = experiments.model.EDNNTrainer(ednn, log_freq=args.log_freq, restart_fleq=args.restart_fleq, logger=logger)
     params = trainer.learn_initial_condition(x0, u0, reg=args.ireg, optim=args.optim, lr=args.lr, atol=args.itol, max_itr=args.max_itr)
     
     # Head Tuning
@@ -116,7 +116,7 @@ def main(args):
     # integration
     us, ps = trainer.integrate(params=params, equation=dataset.equation, method=args.method, solver=args.solver, t_eval=data_t, x_eval=data_x, n_eval=args.n_eval, reg=args.preg, atol=args.atol, rtol=args.rtol)
 
-    # Move to CPU and numpy
+    # to numpy
     us, ps = us[:: args.substeps].detach().cpu().numpy(), ps[:: args.substeps].detach().cpu().numpy()
     
     # error

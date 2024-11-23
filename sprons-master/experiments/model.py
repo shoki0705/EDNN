@@ -325,7 +325,7 @@ class EDNNTrainer(nn.Module):
         # 条件数を計算
         A = Phi.T @ Phi
         condition_number = torch.linalg.cond(A)  # 条件数を計算
-        print(f"係数行列の条件数（最大固有値と最小固有値の比）: {condition_number}")
+        self.logger(f"係数行列の条件数（最大固有値と最小固有値の比）: {condition_number}")
 
         # 最小二乗問題を解く
         result = torch.linalg.lstsq(Phi.cpu(), u0.cpu(), driver="gelsd")  # 最小二乗解を計算
@@ -629,14 +629,14 @@ class EDNNTrainer(nn.Module):
 
     #   ODEの右辺を計算
     def forward(self, t, state):
-        if self.nfe % self.log_freq == 0 or True:
+        if self.nfe % self.log_freq == 0:
             assert t.numel() == 1
             self.logger(f"[{datetime.datetime.now()}] EDNN, Integration: time={t.item():.6e}, nfe={self.nfe}, state mean={state.mean()}, var={state.var()}")
         self.nfe += 1
         if self.nfe % self.restart_fleq == 0:
             print("state_shape", state.shape)
             params_pre = state.reshape(self.params_shape)
-            params_new = self.retraining(params_pre, reg=0.0, optim="adam", lr=1e-3, atol=1e-10, max_itr=50000)
+            params_new = self.retraining(params_pre, reg=0.0, optim="adam", lr=1e-3, atol=1e-7, max_itr=20000)
             state = params_new.reshape(1, -1)
         
         equation = self.integration_params["equation"]

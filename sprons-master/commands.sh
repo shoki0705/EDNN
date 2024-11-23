@@ -1,1 +1,1 @@
-python main.py --dataset AC --optim adam --lr 1 --max_itr 100 --atol 1e-6 --method PreCG 
+python main.py --dataset Advection --optim adam --lr 1 --max_itr 50000 --atol 1e-6 --method collocation --head_tuning 0

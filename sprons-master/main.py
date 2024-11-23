@@ -45,7 +45,7 @@ def get_args():
     parser.add_argument("--atol", default=1e-3, type=float, help="absolute tolerance for solver.")
     parser.add_argument("--rtol", default=1e-3, type=float, help="relative tolerance for solver.")
     parser.add_argument("--substeps", default=50, type=int, help="number of substeps for solver.")
-    parser.add_argument("--restart_fleq",default=200, type=int, help="restart frequency for EDNN.")
+    parser.add_argument("--restart_fleq",default=4000, type=int, help="restart frequency for EDNN.")
     # display
     parser.add_argument("--log_freq", default=200, type=int, help="number of steps between prints.")
     parser.add_argument("--verbose", dest="verbose", action="store_true", help="verbose?.")
@@ -65,6 +65,9 @@ def get_args():
     label += f"-atol{args.atol}"
     label += f"-rtol{args.rtol}"
     label += f"-sinusoidal{args.sinusoidal}"
+    label += f"-headtuning{args.head_tuning}"
+    label += f"-{args.model}"
+    label += f"-{args.restart_fleq}"
     label += f"-{args.postfix}" if args.postfix else ""
     label += f"-seed{args.seed}"
     args.result_path = f"{args.experiment_dir}/{args.result_dir}/{label}"

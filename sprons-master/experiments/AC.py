@@ -41,3 +41,7 @@ class Dataset(BASEDataset):
         u_xx = torch.autograd.grad(u_x.sum(), x, create_graph=True)[0]
         u_t = 0.0001 * u_xx - 5 * u**3 + 5 * u
         return u_t
+
+    def get_initial_condition(self, x):
+        return None
+    

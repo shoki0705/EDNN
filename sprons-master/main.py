@@ -25,7 +25,7 @@ def get_args():
     parser.add_argument("--model", default="fc", type=str, help="NN model.")
     parser.add_argument("--dim_hidden", default=30, type=int, help="number of hidden units.")
     parser.add_argument("--num_layers", default=4, type=int, help="number of hidden layers.")
-    parser.add_argument("--act", default="sin", type=str, help="activation function.", choices=["tanh", "sin", "silu", "relu"])
+    parser.add_argument("--act", default="silu", type=str, help="activation function.", choices=["tanh", "sin", "silu", "relu"])
     parser.add_argument("--sinusoidal", default=5, type=int, help="sinusoidal embedding.")
     parser.add_argument("--head_tuning", default=1, type=int, help="head tuning.", choices=[0, 1])
     # experiments
@@ -37,7 +37,7 @@ def get_args():
     parser.add_argument("--max_itr", default=10000, type=int, help="number of iterations for initialization.")
     parser.add_argument("--lr", default=1, type=float, help="learning rate for initialization.")
     parser.add_argument("--itol", default=1e-9, type=float, help="absolute/gradient tolerance for initialization.")
-    parser.add_argument("--hreg", default=0, type=float, help="regularizer for parameters in head tuning.")
+    parser.add_argument("--hreg", default=1e-5, type=float, help="regularizer for parameters in head tuning.")
     # integration
     parser.add_argument("--method", default="PreCG", type=str, help="method to obtain gradient.", choices=["optimization", "inversion", "collocation", "gelsd", "gpytorchCG", "PreCG"])
     parser.add_argument("--solver", default="rk4", type=str, help="numerical integrator.")
@@ -62,11 +62,11 @@ def get_args():
     label = f"{args.dataset}-{args.method}-{args.solver}"
     label += f"-ireg{args.ireg}" if args.ireg > 0 else ""
     label += f"-preg{args.preg}" if args.preg > 0 else ""
-    label += f"-atol{args.atol}"
-    label += f"-rtol{args.rtol}"
+    #label += f"-atol{args.atol}"
+    #label += f"-rtol{args.rtol}"
     label += f"-sinusoidal{args.sinusoidal}"
     label += f"-headtuning{args.head_tuning}"
-    label += f"-{args.model}"
+    label += f"-{args.optim}" 
     label += f"-{args.restart_fleq}"
     label += f"-{args.postfix}" if args.postfix else ""
     label += f"-seed{args.seed}"
@@ -97,6 +97,9 @@ def main(args):
         is_zero_boundary=dataset.is_zero_boundary,  # ゼロ境界条件
         space_normalization=True,   # 空間の正規化
     )
+    
+    
+    print(t_range, t_freq, args.substeps)
 
     # stream data
     if t_range[1] == int(t_range[1]) and t_freq == int(t_freq):
@@ -114,7 +117,7 @@ def main(args):
     
     # Head Tuning
     if args.head_tuning:
-        params = trainer.head_tuning(params, x0, u0, args.hreg)
+        params = trainer.head_tuning(params, x0_head, u0_head, args.hreg)
     
     # integration
     us, ps = trainer.integrate(params=params, equation=dataset.equation, method=args.method, solver=args.solver, t_eval=data_t, x_eval=data_x, n_eval=args.n_eval, reg=args.preg, atol=args.atol, rtol=args.rtol)

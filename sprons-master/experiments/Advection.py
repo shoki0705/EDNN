@@ -9,12 +9,12 @@ class Dataset(BASEDataset):
     def __init__(self, base_dir: str, N0: int = 0):
         # 定数の定義
         c = 1.0  # 移流速度
-        Nx = 512  # 空間方向のポイント数
+        Nx = 10000  # 空間方向のポイント数
         Nt = 201  # 時間方向のポイント数
 
         # 空間・時間の離散化
         x = np.linspace(-1.0, 1.0, Nx)
-        t = np.linspace(0.0, 1.0, Nt)
+        t = np.linspace(0.0, 0.5, Nt)
 
         # メッシュグリッドの作成
         X, T = np.meshgrid(x, t)
@@ -71,3 +71,7 @@ class Dataset(BASEDataset):
         # 移流方程式の右辺を計算
         u_t = -c * u_x
         return u_t
+    
+    def initial_condition(self, x):
+        return self.u0(x)
+    

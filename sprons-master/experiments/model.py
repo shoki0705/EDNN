@@ -9,7 +9,9 @@ import torchdyn.numerics
 import datetime
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from torchvision.models.feature_extraction import create_feature_extractor
+import linops as lo
+import math
+from dataclasses import dataclass
 
 
 
@@ -98,25 +100,23 @@ class MLP(nn.Module):
                     omega = 30 if i == 0 else 1  # 入力層では w=30、隠れ層では w=1
                     x = torch.sin(omega * x)  # サイン活性化関数を適用
                     
-                # 最終層への入力を記録
+                # 最終層への入力を返す
                 if i == len(weights) - 2 and hidden:
                     final_layer_input = x.clone()
+                    return final_layer_input
         else:
             for i, (w, b, a) in enumerate(zip(weights, biases, with_act)):
                 x = nn.functional.linear(x, w, b)  # 線形変換
                 # 活性化関数があれば適用
                 if a:
                     x = self.act(x)
-                # 最終層への入力を記録
+                # 最終層への入力を返す
                 if i == len(weights) - 2 and hidden:
                     final_layer_input = x.clone()
+                    return final_layer_input
         
-        # hidden=Trueの場合は最終層への入力を返す
-        if hidden:
-            return final_layer_input
-        else:
         # 通常の順伝播の出力を返す
-            return x
+        return x
 
     
 
@@ -280,12 +280,12 @@ class EDNNTrainer(nn.Module):
         self.logger(f"[{datetime.datetime.now()}] EDNN, Learning: IC finished, Loss: {loss.item():.6e}")
 
         # 損失履歴をプロットして保存
-        self.plot_loss_history(loss_history)
+        self.plot_loss_history(loss_history, optim, max_itr)
         
         return params.data
     
     
-    def plot_loss_history(self, loss_history):
+    def plot_loss_history(self, loss_history, optim : str = "Adam", max_itr = "10000"):
         """ 損失履歴をプロットして保存するメソッド """
         plt.figure(figsize=(10, 6))
         plt.plot(loss_history, label='Loss', color='blue')
@@ -295,7 +295,7 @@ class EDNNTrainer(nn.Module):
         plt.yscale('log')  # 損失のスケールを対数にすることも可能
         plt.legend()
         plt.grid()
-        plt.savefig(f'loss_history.png')  # プロットをファイルに保存
+        plt.savefig(f'loss_history_{optim}_itr{max_itr}.png')  # プロットをファイルに保存
         plt.close()  # プロットを閉じる
 
 
@@ -304,43 +304,61 @@ class EDNNTrainer(nn.Module):
         最小二乗問題を解き、最終層の重みとバイアスを計算する。
 
         :param phi_theta: 最終層への入力 (n_eval, feature_dim)
-        :param u0: 真の出力データ (n_eval,)
+        :param u0: 真の出力データ (n_eval, 1)
         :param reg: 正則化項の係数
         :return: 最終層の重み w とバイアス b
         """
         n_eval = phi_theta.shape[0]
         n_features = phi_theta.shape[1]
+        
+        # u0 の形状を確認・調整
+        if u0.dim() == 1:
+            u0 = u0.unsqueeze(1)  # (n_eval,) -> (n_eval, 1)
 
         # 入力行列 Phi を構築
-        Phi = torch.cat([phi_theta, torch.ones(n_eval, 1, device=self.device, dtype=self.dtype)], dim=1)  # (n_eval, feature_dim+1)
+        Phi = torch.cat(
+            [phi_theta, torch.ones(n_eval, 1, device=self.device, dtype=self.dtype)], dim=1
+        )  # (n_eval, n_features + 1)
+
 
         # 正則化行列を追加
         if reg > 0:
-            reg_matrix = reg * torch.eye(n_features + 1, device=self.device, dtype=self.dtype)  # 正則化行列
+            # 正則化行列 reg_matrix を作成（サイズ: (n_features + 1, n_features + 1)）
+            reg_matrix = reg * torch.eye(n_features + 1, device=self.device, dtype=self.dtype)
+
+            # 正則化用の右辺 reg_vector を作成（サイズ: (n_features + 1, 1)）
+            reg_vector = torch.zeros(n_features + 1, 1, device=self.device, dtype=self.dtype)
+
             # Phi に正則化項を適用するために拡張
-            reg_vector = torch.zeros(n_features + 1, device=self.device, dtype=self.dtype)  # 正則化用の右辺
-            Phi = torch.cat([Phi, torch.sqrt(reg_matrix)], dim=0)  # Phi を拡張
-            u0 = torch.cat([u0, reg_vector])  # u0 を拡張
-            
+            Phi = torch.cat([Phi, torch.sqrt(reg_matrix)], dim=0)  # (n_eval + n_features + 1, n_features + 1)
+            u0 = torch.cat([u0, reg_vector], dim=0)  # (n_eval + n_features + 1, 1)
+
+
         # 条件数を計算
         A = Phi.T @ Phi
-        condition_number = torch.linalg.cond(A)  # 条件数を計算
+        condition_number = torch.linalg.cond(A)
         self.logger(f"係数行列の条件数（最大固有値と最小固有値の比）: {condition_number}")
 
         # 最小二乗問題を解く
-        result = torch.linalg.lstsq(Phi.cpu(), u0.cpu(), driver="gelsd")  # 最小二乗解を計算
-        w_b = result.solution.to(device=Phi.device)  # 解を取得
-        
+        result = torch.linalg.lstsq(Phi.cpu(), u0.cpu(), driver="gelsd")
+        w_b = result.solution.to(device=Phi.device)
+
         # 重みとバイアスを分割
-        w = w_b[:-1]  # 最終層の重み
+        w = w_b[:-1]  # 最終層の重み (n_features, 1)
         b = w_b[-1]   # 最終層のバイアス
 
         return w, b, Phi, w_b
 
 
+
     def head_tuning(self, params, x0, u0, reg: float = 1e-5):
         self.logger(f"[{datetime.datetime.now()}] EDNN, Head tuning started...")
 
+        
+        
+        
+        
+        
         # 入力データをテンソルに変換し、デバイスに転送
         x0 = torch.from_numpy(x0).to(device=self.device, dtype=self.dtype)
         u0 = torch.from_numpy(u0).to(device=self.device, dtype=self.dtype)
@@ -349,6 +367,7 @@ class EDNNTrainer(nn.Module):
         with torch.no_grad():
             phi_theta = self.ednn(x0, params, hidden=True)  # (n_eval, feature_dim)
 
+        
         # 最小二乗問題を解く
         w, b, Phi, w_b = self.solve_head(phi_theta, u0, reg)  # 重みとバイアスを計算
 
@@ -357,8 +376,11 @@ class EDNNTrainer(nn.Module):
         weights[-1].copy_(w.view_as(weights[-1]))  # 重みを更新
         biases[-1].copy_(b)  # バイアスを更新
 
-        # 最終的な損失を計算
-        predicted_u0 = Phi @ w_b  # 推定された出力
+        # モデルを用いて推定出力を計算
+        with torch.no_grad():
+            predicted_u0 = self.ednn(x0, params)  # モデルによる推定出力
+
+        # 損失を計算
         final_loss = nn.functional.mse_loss(predicted_u0, u0)  # MSE損失
 
         self.logger(f"[{datetime.datetime.now()}] EDNN, Head tuning finished. Final Loss: {final_loss.item():.6e}")
@@ -483,7 +505,7 @@ class EDNNTrainer(nn.Module):
                     return torch.einsum("dij,dj->di", (M, v))
 
                 # GPyTorchのlinear_cgを用いて解を計算
-                max_iter = 1000
+                max_iter = 10000
                 tol = 1e-6
 
                 deriv = linear_cg(matmul_closure, a, tolerance=tol, max_iter=max_iter)
@@ -498,12 +520,39 @@ class EDNNTrainer(nn.Module):
                     """
                     M @ v を計算するクロージャ
                     """
+                    
+                    if v.dim() == 1:
+                        v = v.unsqueeze(0)
+                    
                     return torch.einsum("dij,dj->di", (M, v))
 
                 # プリコンディショナーを計算するクロージャ
                 def preconditioner_closure(v):
-                    P = self.compute_nystrom_preconditioner(M, subspace_rank, reg)
-                    return torch.einsum("dij,dj->di", (P, v))
+                    # プリコンディショナーをキャッシュ
+                    if not hasattr(self, "_precomputed_P") or self._precomputed_P is None:
+                        self._precomputed_P = self.compute_nystrom_preconditioner(M, reg)
+                    P = self._precomputed_P
+                    # 入力 v が P と同じデバイスにあることを確認
+                    if v.device != P.A_hat.U.device:
+                        v = v.to(P.A_hat.U.device)
+                    
+                    
+                    if v.dim() == 2 and v.size(0) == 1:
+                        v = v.squeeze(0)
+                    
+                    # P_inv(v) を計算
+                    U = P.A_hat.U
+                    Lambda_hat = P.A_hat.Lambda_hat
+                    mu = P.mu
+
+                    # プリコンディショナーを適用 (P^{-1}v)
+                    v_projected = U.T @ v  # U^T @ v
+                    scaled_projection = (v_projected / (Lambda_hat + mu))  # スケーリング
+                    preconditioned_v = U @ scaled_projection + (v - U @ v_projected)
+
+                    preconditioned_v = preconditioned_v.unsqueeze(0)
+                    
+                    return preconditioned_v
 
 
                 # GPyTorchのlinear_cgを用いて解を計算
@@ -518,45 +567,78 @@ class EDNNTrainer(nn.Module):
                 raise NotImplementedError(method)
 
         return deriv
+    
+    
+    def construct_approximation(
+            self,
+            A: lo.LinearOperator,
+            l_0: int,
+            l_max: int,
+            power_iter_count: int,
+            error_tol, dtype=None):
+        n = A.shape[0]
+        assert A.shape[0] == A.shape[1]
+        device = self.device
 
-    def compute_nystrom_preconditioner(self, M, subspace_rank=100, reg=1e-6):
+        Y = torch.empty((n, 0), dtype=dtype, device=device)
+        Omega = torch.empty((n, 0), dtype=dtype, device=device)
+        E = torch.inf
+        m = l_0
+        break_early = False
+        U = torch.Tensor([])
+        Lambda_hat = torch.Tensor([])
+        nu = math.sqrt(n) * torch.finfo().eps
+
+        while E > error_tol:
+            Omega_0 = torch.randn((n, m), dtype=dtype, device=device)
+            Omega_0, _ = torch.linalg.qr(Omega_0)
+            Y_0 = lo.operator_matrix_product(A, Omega_0)
+            Omega = torch.hstack([Omega, Omega_0])
+            Y = torch.hstack([Y, Y_0])
+            Y_nu = Y + nu * Omega
+            C = torch.linalg.cholesky(Omega.T @ Y_nu).T
+            B = torch.linalg.solve_triangular(C, Y_nu, upper=True, left=False)
+            U, Sigma, _ = torch.linalg.svd(B, False)
+            Lambda_hat = torch.relu(Sigma * Sigma - nu)
+
+            if break_early:
+                break
+
+            E = lo.nystrom_precondition.randomized_power_err_est(A, U, Lambda_hat, power_iter_count, dtype, device)
+            m, l_0 = l_0, 2 * l_0
+            if l_0 > l_max:
+                l_0 = l_0 - m
+                m = l_max - l_0
+                break_early = True
+        #Add threshold to cut off too small values
+        return lo.nystrom_precondition._NystromApproximation(U, Lambda_hat)
+    
+    def compute_nystrom_preconditioner(self, M, reg=1e-6):
         """
-        ランダム化Nystromプリコンディショナーを構築
-        
-        Args:
-            M (torch.Tensor): 元の行列 (d, d)。
-            subspace_rank (int): サブスペースのランク ℓ。
-            reg (float): 正則化項 ν。
-        
-        Returns:
-            torch.Tensor: プリコンディショナー行列 P。
+        ランダム化Nystromプリコンディショナーを計算する。
         """
-        d = M.shape[0]  # 行列の次元
-        l = min(subspace_rank, d)  # ランク ℓ は d を超えない
-
-        # ランダムなガウス射影行列 Ω ∈ R^(d x ℓ) を生成
-        Omega = torch.randn(d, l, device=M.device, dtype=M.dtype)
-
-        # Nystrom 近似 Mnys を構築
-        M_Omega = M @ Omega  # (d, ℓ)
-        Omega_M_Omega = Omega.T @ M_Omega  # (ℓ, ℓ)
-
-        # Cholesky 分解と逆行列の計算
-        try:
-            inv_Omega_M_Omega = torch.linalg.inv(Omega_M_Omega + reg * torch.eye(l, device=M.device, dtype=M.dtype))
-        except RuntimeError:
-            raise ValueError("Cholesky decomposition failed. Check M and subspace rank.")
-
-        # Nystrom 近似行列 Mnys
-        Mnys = M_Omega @ inv_Omega_M_Omega @ M_Omega.T  # (d, d)
-
-        # 固有値分解 (SVD)
-        U, S, _ = torch.linalg.svd(Mnys)
-
-        # プリコンディショナーを構築
-        Lambda_inv = torch.diag_embed(1 / (S + reg))  # 正則化された固有値の逆数
-        P = U @ Lambda_inv @ U.T + torch.eye(d, device=M.device, dtype=M.dtype) - U @ U.T
-
+        # M がバッチ次元を持っている場合は squeeze しておく
+        M = M.squeeze(0)
+        
+        linear_operator_M = lo.aslinearoperator(M)
+        l_0 = 100
+        l_max = 300
+        power_iter_count = 2  # パワーイテレーションの回数
+        error_tol = 1e-6  # 許容誤差
+        
+        
+        M_hat = self.construct_approximation(
+            A=linear_operator_M,
+            l_0=l_0,
+            l_max=l_max,
+            power_iter_count=power_iter_count,
+            error_tol=error_tol,
+            dtype=self.dtype,
+        )
+        
+        mu = torch.tensor(reg, dtype=self.dtype, device=self.device)
+        P = lo.nystrom_precondition.NystromPreconditioner(A_hat=M_hat, mu=mu)
+        
         return P
 
 
@@ -629,12 +711,12 @@ class EDNNTrainer(nn.Module):
 
     #   ODEの右辺を計算
     def forward(self, t, state):
-        if self.nfe % self.log_freq == 0:
+        if self.nfe % self.log_freq == 0 or True:
             assert t.numel() == 1
             self.logger(f"[{datetime.datetime.now()}] EDNN, Integration: time={t.item():.6e}, nfe={self.nfe}, state mean={state.mean()}, var={state.var()}")
         self.nfe += 1
-        if self.nfe % self.restart_fleq == 0:
-            print("state_shape", state.shape)
+        if self.nfe % self.restart_fleq == 0 and self.nfe != 40000:
+            #print("state_shape", state.shape)
             params_pre = state.reshape(self.params_shape)
             params_new = self.retraining(params_pre, reg=0.0, optim="adam", lr=1e-3, atol=1e-7, max_itr=20000)
             state = params_new.reshape(1, -1)

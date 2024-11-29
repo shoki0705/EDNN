@@ -621,8 +621,8 @@ class EDNNTrainer(nn.Module):
         M = M.squeeze(0)
         
         linear_operator_M = lo.aslinearoperator(M)
-        l_0 = 100
-        l_max = 300
+        l_0 = 200
+        l_max = 350
         power_iter_count = 2  # パワーイテレーションの回数
         error_tol = 1e-6  # 許容誤差
         

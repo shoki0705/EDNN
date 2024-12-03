@@ -171,8 +171,8 @@ class EDNN(nn.Module):
                 state_list=[]
                 # サイン波埋め込み
                 for k in range(1,self.sinusoidal+1):
-                    sin_2k_x_norm = torch.sin(torch.pi * 2**(k-1)*x_norm)*2**(-(k-1))   # sin(2^k x) / 2^k
-                    cos_2k_x_norm = torch.cos(torch.pi * 2**(k-1)*x_norm)*2**(-(k-1))   # cos(2^k x) / 2^k
+                    sin_2k_x_norm = 1.5 * torch.sin(torch.pi * 2**(k-1)*x_norm)*2**(-(k-1))   # sin(2^k x) / 2^k
+                    cos_2k_x_norm = 1.5 * torch.cos(torch.pi * 2**(k-1)*x_norm)*2**(-(k-1))   # cos(2^k x) / 2^k
                     # state_listに追加
                     state_list.append(sin_2k_x_norm)
                     state_list.append(cos_2k_x_norm)
@@ -217,14 +217,19 @@ class EDNNTrainer(nn.Module):
         self.logger(f"[{datetime.datetime.now()}] EDNN, Initialized: The number of parameters is ", self.ednn.mlp.n_params)
 
 
-    def learn_initial_condition(self, x0, u0, reg: float = 0.0, optim: str = "adam", lr: float = 1e-3, atol: float = 1e-7, max_itr: int = 1000000):
+    def learn_initial_condition(self, x0, u0, reg: float = 0.0, optim: str = "adam", lr: float = 1e-3, atol: float = 1e-7, max_itr: int = 1000000, batch_size: int = 1000):
         self.x0 = x0
+        self.batch_size = batch_size
         self.logger(f"[{datetime.datetime.now()}] EDNN, Learning: IC...")
         assert reg >= 0.0
         
         # x0, u0をGPUに転送
         x0 = torch.from_numpy(x0).to(device=self.device, dtype=self.dtype)
         u0 = torch.from_numpy(u0).to(device=self.device, dtype=self.dtype)
+
+        # データセット全体をバッチに分割
+        dataset = torch.utils.data.TensorDataset(x0, u0)
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
         # パラメータの初期化
         params = self.ednn.get_init_params().to(device=self.device, dtype=self.dtype)
@@ -242,39 +247,25 @@ class EDNNTrainer(nn.Module):
         with tqdm(total=max_itr, desc="Training Progress", unit="step") as pbar:
             # 最適化
             with torch.set_grad_enabled(True):
-                def closure():
-                    nonlocal itr
-                    optimizer.zero_grad()   # 勾配の初期化
-                    loss = nn.functional.mse_loss(self.ednn(x0, params, hidden=False), u0)    # 損失の計算
-                    if reg > 0.0:
-                        loss = loss + reg * params.__pow__(2).sum()  # 正則化項の追加
-                    loss.backward()  # 逆伝播
-                    itr += 1
-                    loss_history.append(loss.item())  # 損失を履歴に追加
+                for epoch in range(max_itr // len(dataloader)):
+                    for batch_x, batch_u in dataloader:
+                        optimizer.zero_grad()  # 勾配の初期化
+                        loss = nn.functional.mse_loss(self.ednn(batch_x, params, hidden=False), batch_u)  # 損失の計算
+                        if reg > 0.0:
+                            loss = loss + reg * params.__pow__(2).sum()  # 正則化項の追加
+                        loss.backward()  # 逆伝播
+                        optimizer.step()  # パラメータ更新
+                        itr += 1
+                        loss_history.append(loss.item())  # 損失を履歴に追加
 
-                    # プログレスバーの更新
-                    pbar.set_postfix(loss=f"{loss.item():.6e}")  # 損失値を表示
-                    pbar.update(1)  # プログレスバーを1ステップ進める
-                    return loss.item()
+                        # プログレスバーの更新
+                        pbar.set_postfix(loss=f"{loss.item():.6e}")  # 損失値を表示
+                        pbar.update(1)  # プログレスバーを1ステップ進める
 
-                # 最適化手法の選択
-                if optim.startswith("adam"):
-                    self.logger(f"[{datetime.datetime.now()}] EDNN, Learning: IC by Adam...")
-                    while itr < max_itr:
-                        loss = closure()
-                        optimizer.step()
-                        if loss < atol: # 損失が許容誤差以下になったら終了
+                        if loss.item() < atol or itr >= max_itr:  # 許容誤差以下または最大反復数に達したら終了
                             break
-                elif optim.startswith("lbfgs"):
-                    self.logger(f"[{datetime.datetime.now()}] EDNN, Learning: IC by Adam first...")
-                    while itr < max_itr // 10:
-                        loss = closure()
-                        optimizer.step()
-                    self.logger(f"[{datetime.datetime.now()}] EDNN, Learning: IC by LBFGS...")
-                    optimizer = torch.optim.LBFGS([params], lr=lr, max_iter=max_itr - max_itr // 10, tolerance_grad=atol, tolerance_change=0, history_size=100)
-                    optimizer.step(closure)
-                else:
-                    raise NotImplementedError(self.optim)
+                    if loss.item() < atol or itr >= max_itr:
+                        break
 
         loss = nn.functional.mse_loss(self.ednn(x0, params), u0)
         self.logger(f"[{datetime.datetime.now()}] EDNN, Learning: IC finished, Loss: {loss.item():.6e}")
@@ -283,6 +274,7 @@ class EDNNTrainer(nn.Module):
         self.plot_loss_history(loss_history, optim, max_itr)
         
         return params.data
+
     
     
     def plot_loss_history(self, loss_history, optim : str = "Adam", max_itr = "10000"):
@@ -347,30 +339,30 @@ class EDNNTrainer(nn.Module):
         w = w_b[:-1]  # 最終層の重み (n_features, 1)
         b = w_b[-1]   # 最終層のバイアス
 
-        return w, b, Phi, w_b
+        return w, b
 
 
 
-    def head_tuning(self, params, x0, u0, reg: float = 1e-5):
+    def head_tuning(self, params, x0_in, u0_in, initial_equation = None, hreg: float = 1e-5, N = 50000):
         self.logger(f"[{datetime.datetime.now()}] EDNN, Head tuning started...")
 
-        
-        
-        
-        
-        
-        # 入力データをテンソルに変換し、デバイスに転送
-        x0 = torch.from_numpy(x0).to(device=self.device, dtype=self.dtype)
-        u0 = torch.from_numpy(u0).to(device=self.device, dtype=self.dtype)
+        if initial_equation is not None:
+            x0 = self.ednn.get_random_sampling_points(N)
+            x0 = x0.cpu().numpy()
+            u0 = initial_equation(x0)
+            x0 = torch.from_numpy(x0).to(device=self.device, dtype=self.dtype)
+            u0 = torch.from_numpy(u0).to(device=self.device, dtype=self.dtype)
+        else:
+            x0 = torch.from_numpy(x0_in).to(device=self.device, dtype=self.dtype)
+            u0 = torch.from_numpy(u0_in).to(device=self.device, dtype=self.dtype)
 
         # 中間層の出力を取得（最終層への入力）
         with torch.no_grad():
             phi_theta = self.ednn(x0, params, hidden=True)  # (n_eval, feature_dim)
-
         
         # 最小二乗問題を解く
-        w, b, Phi, w_b = self.solve_head(phi_theta, u0, reg)  # 重みとバイアスを計算
-
+        w, b = self.solve_head(phi_theta, u0, hreg)  # 重みとバイアスを計算
+        
         # パラメータに反映
         weights, biases = self.ednn.mlp.segment_params(params)
         weights[-1].copy_(w.view_as(weights[-1]))  # 重みを更新
@@ -505,14 +497,13 @@ class EDNNTrainer(nn.Module):
                     return torch.einsum("dij,dj->di", (M, v))
 
                 # GPyTorchのlinear_cgを用いて解を計算
-                max_iter = 10000
+                max_iter = 1000
                 tol = 1e-6
 
                 deriv = linear_cg(matmul_closure, a, tolerance=tol, max_iter=max_iter)
                 
             elif method == "PreCG":
                 from linear_operator.utils.linear_cg import linear_cg
-                subspace_rank=100
                 reg=1e-6
 
                 # ヤコビアンの積を計算するクロージャを定義
@@ -528,10 +519,8 @@ class EDNNTrainer(nn.Module):
 
                 # プリコンディショナーを計算するクロージャ
                 def preconditioner_closure(v):
-                    # プリコンディショナーをキャッシュ
-                    if not hasattr(self, "_precomputed_P") or self._precomputed_P is None:
-                        self._precomputed_P = self.compute_nystrom_preconditioner(M, reg)
-                    P = self._precomputed_P
+                    
+                    P = self.compute_nystrom_preconditioner(M, reg)
                     # 入力 v が P と同じデバイスにあることを確認
                     if v.device != P.A_hat.U.device:
                         v = v.to(P.A_hat.U.device)
@@ -643,69 +632,60 @@ class EDNNTrainer(nn.Module):
 
 
 
-    # モデルの再学習
-    def retraining(self, params_pre, reg: float = 0.0, optim: str = "adam", lr: float = 1e-3, atol: float = 1e-7, max_itr: int = 1000000):
-            self.logger(f"[{datetime.datetime.now()}] EDNN, Re-training model...")
-            assert reg >= 0.0
-            x0 = self.x0
-            x0 = torch.from_numpy(x0).to(device=self.device, dtype=self.dtype)
-            
-            with torch.no_grad():
-                u0 = self.ednn(x0, params_pre, hidden = False)   # 事前モデルでの出力
-            
-            u0 = u0.to(device=self.device, dtype=self.dtype)
+        # モデルの再学習
+    def retraining(self, params_pre, reg: float = 0.0, optim: str = "adam", lr: float = 1e-3, atol: float = 1e-7, max_itr: int = 1000000, batch_size: int = 1000):
+        self.logger(f"[{datetime.datetime.now()}] EDNN, Re-training model...")
+        assert reg >= 0.0
 
+        # x0とu0を準備
+        x0 = self.x0
+        x0 = torch.from_numpy(x0).to(device=self.device, dtype=self.dtype)
 
-            # パラメータの初期化
-            params = self.ednn.get_init_params().to(device=self.device, dtype=self.dtype)
-            params = nn.Parameter(params)
+        with torch.no_grad():
+            u0 = self.ednn(x0, params_pre, hidden=False)  # 事前モデルでの出力
 
-            # 最適化手法の設定
-            itr = 0
-            optimizer = torch.optim.Adam([params], lr=min(lr, 1e-3), weight_decay=0)
-            
+        u0 = u0.to(device=self.device, dtype=self.dtype)
 
-            # プログレスバーを設定
-            with tqdm(total=max_itr, desc="Re-training Progress", unit="step") as pbar:
-                # 最適化
-                with torch.set_grad_enabled(True):
-                    def closure():
-                        nonlocal itr
-                        optimizer.zero_grad()   # 勾配の初期化
-                        loss = nn.functional.mse_loss(self.ednn(x0, params, hidden=False), u0)    # 損失の計算
+        # データセット全体をバッチに分割
+        dataset = torch.utils.data.TensorDataset(x0, u0)
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+        # パラメータの初期化
+        params = self.ednn.get_init_params().to(device=self.device, dtype=self.dtype)
+        params = nn.Parameter(params)
+
+        # 最適化手法の設定
+        itr = 0
+        optimizer = torch.optim.Adam([params], lr=min(lr, 1e-3), weight_decay=0)
+
+        # プログレスバーを設定
+        with tqdm(total=max_itr, desc="Re-training Progress", unit="step") as pbar:
+            # 最適化
+            with torch.set_grad_enabled(True):
+                for epoch in range(max_itr // len(dataloader)):
+                    for batch_x, batch_u in dataloader:
+                        optimizer.zero_grad()  # 勾配の初期化
+                        loss = nn.functional.mse_loss(self.ednn(batch_x, params, hidden=False), batch_u)  # 損失の計算
                         if reg > 0.0:
                             loss = loss + reg * params.__pow__(2).sum()  # 正則化項の追加
                         loss.backward()  # 逆伝播
+                        optimizer.step()  # パラメータ更新
                         itr += 1
 
                         # プログレスバーの更新
                         pbar.set_postfix(loss=f"{loss.item():.6e}")  # 損失値を表示
                         pbar.update(1)  # プログレスバーを1ステップ進める
-                        return loss.item()
 
-                    # 最適化手法の選択
-                    if optim.startswith("adam"):
-                        self.logger(f"[{datetime.datetime.now()}] EDNN, Re-training: IC by Adam...")
-                        while itr < max_itr:
-                            loss = closure()
-                            optimizer.step()
-                            if loss < atol: # 損失が許容誤差以下になったら終了
-                                break
-                    elif optim.startswith("lbfgs"):
-                        self.logger(f"[{datetime.datetime.now()}] EDNN, Re-training: IC by Adam first...")
-                        while itr < max_itr // 10:
-                            loss = closure()
-                            optimizer.step()
-                        self.logger(f"[{datetime.datetime.now()}] EDNN, Re-training: IC by LBFGS...")
-                        optimizer = torch.optim.LBFGS([params], lr=lr, max_iter=max_itr - max_itr // 10, tolerance_grad=atol, tolerance_change=0, history_size=100)
-                        optimizer.step(closure)
-                    else:
-                        raise NotImplementedError(self.optim)
+                        if loss.item() < atol or itr >= max_itr:  # 許容誤差以下または最大反復数に達したら終了
+                            break
+                    if loss.item() < atol or itr >= max_itr:
+                        break
 
-            loss = nn.functional.mse_loss(self.ednn(x0, params), u0)
-            self.logger(f"[{datetime.datetime.now()}] EDNN, Re-training: IC finished, Loss: {loss.item():.6e}")
-            
-            return params.data
+        loss = nn.functional.mse_loss(self.ednn(x0, params), u0)
+        self.logger(f"[{datetime.datetime.now()}] EDNN, Re-training: IC finished, Loss: {loss.item():.6e}")
+
+        return params.data
+
 
 
 
@@ -718,7 +698,7 @@ class EDNNTrainer(nn.Module):
         if self.nfe % self.restart_fleq == 0 and self.nfe != 40000:
             #print("state_shape", state.shape)
             params_pre = state.reshape(self.params_shape)
-            params_new = self.retraining(params_pre, reg=0.0, optim="adam", lr=1e-3, atol=1e-7, max_itr=20000)
+            params_new = self.retraining(params_pre, reg=0.0, optim="adam", lr=1e-3, atol=1e-7, max_itr=20000, batch_size=self.batch_size)
             state = params_new.reshape(1, -1)
         
         equation = self.integration_params["equation"]

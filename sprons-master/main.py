@@ -33,6 +33,7 @@ def get_args():
     parser.add_argument("--preg", default=0.0, type=float, help="regularizer for parameters in prediction.")
     parser.add_argument("--seed", default=0, type=int, help="random seed.")
     parser.add_argument("--dataset", default="AC", type=str, help="dataset name")
+    parser.add_argument("--batch", default="1000", type=int, help="batch size")
     parser.add_argument("--optim", default="lbfgs", type=str, help="optimizer for initialization.", choices=["adam", "lbfgs"])
     parser.add_argument("--max_itr", default=50000, type=int, help="number of iterations for initialization.")
     parser.add_argument("--lr", default=1e-3, type=float, help="learning rate for initialization.")
@@ -97,10 +98,6 @@ def main(args):
         is_zero_boundary=dataset.is_zero_boundary,  # ゼロ境界条件
         space_normalization=True,   # 空間の正規化
     )
-    
-    
-    print(t_range, t_freq, args.substeps)
-
     # stream data
     if t_range[1] == int(t_range[1]) and t_freq == int(t_freq):
         data_t = np.linspace(0, t_range[-1], int(t_range[-1] * t_freq * args.substeps + 1))
@@ -113,11 +110,11 @@ def main(args):
 
     # training initial condition
     trainer = experiments.model.EDNNTrainer(ednn, log_freq=args.log_freq, restart_fleq=args.restart_fleq, logger=logger)
-    params = trainer.learn_initial_condition(x0, u0, reg=args.ireg, optim=args.optim, lr=args.lr, atol=args.itol, max_itr=args.max_itr)
+    params = trainer.learn_initial_condition(x0, u0, reg=args.ireg, optim=args.optim, lr=args.lr, atol=args.itol, max_itr=args.max_itr, batch_size=args.batch)
     
     # Head Tuning
     if args.head_tuning:
-        params = trainer.head_tuning(params, x0_head, u0_head, args.hreg)
+        params = trainer.head_tuning(params, x0, u0, initial_equation = dataset.initial_condition, hreg = args.hreg)
     
     # integration
     us, ps = trainer.integrate(params=params, equation=dataset.equation, method=args.method, solver=args.solver, t_eval=data_t, x_eval=data_x, n_eval=args.n_eval, reg=args.preg, atol=args.atol, rtol=args.rtol)

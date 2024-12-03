@@ -18,10 +18,9 @@ class Dataset(BASEDataset):
 
         # メッシュグリッドの作成
         X, T = np.meshgrid(x, t)
-
-        # 初期条件の定義
-        def u0(x):
-            return np.sin(np.pi * x)
+        
+        u0 = lambda x: np.sin(np.pi * x)
+        self.initial_condition = u0
 
         # 真の解の計算（解析解）
         U = u0(X - c * T)
@@ -72,6 +71,4 @@ class Dataset(BASEDataset):
         u_t = -c * u_x
         return u_t
     
-    def initial_condition(self, x):
-        return self.u0(x)
     

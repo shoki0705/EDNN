@@ -1,3 +1,12 @@
+import unittest
+import torch
+import numpy as np
+from torch.nn import functional as F
+
+
+
+
+
 import scipy
 import scipy.sparse.linalg
 import sys
@@ -12,7 +21,6 @@ from tqdm import tqdm
 import linops as lo
 import math
 from dataclasses import dataclass
-from linear_operator.utils.linear_cg import linear_cg
 
 
 
@@ -293,67 +301,59 @@ class EDNNTrainer(nn.Module):
         plt.close()  # プロットを閉じる
 
 
-    def solve_head(self, phi_theta, u0, reg: float = 1e-5, initial_weights=None, initial_bias=None, max_iter=500, tol=1e-6):
+    def solve_head(self, phi_theta, u0, reg: float = 1e-5):
         """
         最小二乗問題を解き、最終層の重みとバイアスを計算する。
 
         :param phi_theta: 最終層への入力 (n_eval, feature_dim)
         :param u0: 真の出力データ (n_eval, 1)
         :param reg: 正則化項の係数
-        :param initial_weights: 既存の重みを初期値として使用 (n_features,)
-        :param initial_bias: 既存のバイアスを初期値として使用 (1,)
-        :param max_iter: LBFGSの最大イテレーション数
-        :param tol: 許容誤差
         :return: 最終層の重み w とバイアス b
         """
         n_eval = phi_theta.shape[0]
         n_features = phi_theta.shape[1]
-
+        
         # u0 の形状を確認・調整
         if u0.dim() == 1:
             u0 = u0.unsqueeze(1)  # (n_eval,) -> (n_eval, 1)
 
-        # 入力行列 Phi を構築 (バイアス項のために1列追加)
+        # 入力行列 Phi を構築
         Phi = torch.cat(
             [phi_theta, torch.ones(n_eval, 1, device=self.device, dtype=self.dtype)], dim=1
         )  # (n_eval, n_features + 1)
 
-        # 正則化行列を作成
+
+        # 正則化行列を追加
         if reg > 0:
-            reg_matrix = reg * torch.eye(Phi.size(1), device=self.device, dtype=self.dtype)
-            Phi = torch.cat([Phi, torch.sqrt(reg_matrix)], dim=0)
-            u0 = torch.cat([u0, torch.zeros(reg_matrix.size(0), 1, device=self.device, dtype=self.dtype)], dim=0)
+            # 正則化行列 reg_matrix を作成（サイズ: (n_features + 1, n_features + 1)）
+            reg_matrix = reg * torch.eye(n_features + 1, device=self.device, dtype=self.dtype)
 
-        # 初期値を設定
-        w_b = torch.zeros(Phi.size(1), device=self.device, dtype=self.dtype)
-        if initial_weights is not None and initial_bias is not None:
-            w_b[:-1] = initial_weights.view(-1)  # 重みを初期値として使用
-            w_b[-1] = initial_bias  # バイアスを初期値として使用
+            # 正則化用の右辺 reg_vector を作成（サイズ: (n_features + 1, 1)）
+            reg_vector = torch.zeros(n_features + 1, 1, device=self.device, dtype=self.dtype)
 
-        # LBFGS オプティマイザー
-        w_b = w_b.clone().requires_grad_(True)
-        optimizer = torch.optim.LBFGS([w_b], max_iter=max_iter, tolerance_grad=tol, tolerance_change=tol)
-
-        def closure():
-            optimizer.zero_grad()
-            residual = torch.addmm(u0, Phi, w_b.unsqueeze(1), alpha=-1)  # Phi @ w_b - u0 を計算
-            loss = torch.mean(residual.pow(2))  # MSE損失
-            loss.backward(retain_graph=False)  # 不要な計算グラフの保持を回避
-            return loss
+            # Phi に正則化項を適用するために拡張
+            Phi = torch.cat([Phi, torch.sqrt(reg_matrix)], dim=0)  # (n_eval + n_features + 1, n_features + 1)
+            u0 = torch.cat([u0, reg_vector], dim=0)  # (n_eval + n_features + 1, 1)
 
 
-        optimizer.step(closure)
+        # 条件数を計算
+        A = Phi.T @ Phi
+        condition_number = torch.linalg.cond(A)
+        self.logger(f"係数行列の条件数（最大固有値と最小固有値の比）: {condition_number}")
+
+        # 最小二乗問題を解く
+        result = torch.linalg.lstsq(Phi.cpu(), u0.cpu(), driver="gelsd")
+        w_b = result.solution.to(device=Phi.device)
 
         # 重みとバイアスを分割
-        w = w_b[:-1].detach()  # 最終層の重み
-        b = w_b[-1].detach()  # 最終層のバイアス
+        w = w_b[:-1]  # 最終層の重み (n_features, 1)
+        b = w_b[-1]   # 最終層のバイアス
 
         return w, b
 
 
 
-    def head_tuning(self, params, x0_in, u0_in, initial_equation=None, hreg: float = 1e-5, N=100000):
-        
+    def head_tuning(self, params, x0_in, u0_in, initial_equation = None, hreg: float = 1e-5, N = 50000):
         self.logger(f"[{datetime.datetime.now()}] EDNN, Head tuning started...")
 
         if initial_equation is not None:
@@ -369,31 +369,25 @@ class EDNNTrainer(nn.Module):
         # 中間層の出力を取得（最終層への入力）
         with torch.no_grad():
             phi_theta = self.ednn(x0, params, hidden=True)  # (n_eval, feature_dim)
-
-        # 初期損失を計算
-        with torch.no_grad():
-            predicted_u0 = self.ednn(x0, params)
-        initial_loss = nn.functional.mse_loss(predicted_u0, u0)
-        self.logger(f"[{datetime.datetime.now()}] EDNN, Initial Loss: {initial_loss.item():.6e}")
-
-        # 最小二乗問題を解く
-        w, b = self.solve_head(phi_theta, u0, hreg)
-
-        # パラメータを更新
-        weights, biases = self.ednn.mlp.segment_params(params)
-        weights[-1].copy_(w.view_as(weights[-1]))
-        biases[-1].copy_(b)
-
-        # チューニング後の損失を計算
-        with torch.no_grad():
-            predicted_u0 = self.ednn(x0, params)
-        final_loss = nn.functional.mse_loss(predicted_u0, u0)
-        self.logger(f"[{datetime.datetime.now()}] EDNN, Final Loss: {final_loss.item():.6e}")
         
-        self.logger(f"[{datetime.datetime.now()}] EDNN, Head tuning finished.")
+        # 最小二乗問題を解く
+        w, b = self.solve_head(phi_theta, u0, hreg)  # 重みとバイアスを計算
+        
+        # パラメータに反映
+        weights, biases = self.ednn.mlp.segment_params(params)
+        weights[-1].copy_(w.view_as(weights[-1]))  # 重みを更新
+        biases[-1].copy_(b)  # バイアスを更新
 
+        # モデルを用いて推定出力を計算
+        with torch.no_grad():
+            predicted_u0 = self.ednn(x0, params)  # モデルによる推定出力
+
+        # 損失を計算
+        final_loss = nn.functional.mse_loss(predicted_u0, u0)  # MSE損失
+
+        self.logger(f"[{datetime.datetime.now()}] EDNN, Head tuning finished. Final Loss: {final_loss.item():.6e}")
+        
         return params
-
 
 
     #   時間微分の計算
@@ -459,6 +453,7 @@ class EDNNTrainer(nn.Module):
                     
             
             elif method == "gpytorchCG":
+                from linear_operator.utils.linear_cg import linear_cg
 
                 # ヤコビアンの積を計算するクロージャを定義
                 def matmul_closure(v):
@@ -473,7 +468,7 @@ class EDNNTrainer(nn.Module):
                 
                 
             elif method == "PreCG":
-                
+                from linear_operator.utils.linear_cg import linear_cg
                 reg=1e-6
 
                 # ヤコビアンの積を計算するクロージャを定義
@@ -541,7 +536,7 @@ class EDNNTrainer(nn.Module):
         error_tol = 1e-6  # 許容誤差
         
         
-        M_hat = lo.nystrom_precondition.construct_approximation(
+        M_hat = self.construct_approximation(
             A=linear_operator_M,
             l_0=l_0,
             l_max=l_max,
@@ -675,3 +670,55 @@ class EDNNTrainer(nn.Module):
         return solver
 
     
+class TestEDNNTrainer(unittest.TestCase):
+    def setUp(self):
+        # 初期設定
+        x_range = np.array([[0, 1], [0, 1]])  # 2D空間範囲
+        space_dim = 2
+        state_dim = 1
+        dim_hidden = 10
+        num_layers = 3
+        nonlinearity = "relu"
+        
+        self.ednn = EDNN(
+            x_range=x_range,
+            space_dim=space_dim,
+            state_dim=state_dim,
+            dim_hidden=dim_hidden,
+            num_layers=num_layers,
+            nonlinearity=nonlinearity,
+        )
+        self.trainer = EDNNTrainer(self.ednn)
+        self.device = self.trainer.device
+        self.dtype = self.trainer.dtype
+
+    def test_head_tuning(self):
+        # テストデータの準備
+        N = 100  # サンプル数
+        x0 = self.ednn.get_random_sampling_points(N).cpu().numpy()  # 入力
+        u0 = np.sin(np.pi * x0[:, 0]) * np.cos(np.pi * x0[:, 1])  # 目標出力
+        
+        # 初期パラメータ
+        params = self.ednn.get_init_params().to(self.device, dtype=self.dtype)
+
+        # `head_tuning` を実行
+        tuned_params = self.trainer.head_tuning(params, x0, u0, hreg = 0, N = 10000)
+
+        # チューニング後の出力を確認
+        x0_tensor = torch.from_numpy(x0).to(self.device, dtype=self.dtype)
+        u0_tensor = torch.from_numpy(u0).to(self.device, dtype=self.dtype)
+        with torch.no_grad():
+            predicted_u0 = self.ednn(x0_tensor, tuned_params)
+        
+        # 出力と目標値の損失を計算
+        loss = F.mse_loss(predicted_u0, u0_tensor)
+
+        # アサーション
+        self.assertLess(
+            loss.item(),
+            1e-2,
+            f"Loss after head tuning is too high: {loss.item()}"
+        )
+
+if __name__ == "__main__":
+    unittest.main()

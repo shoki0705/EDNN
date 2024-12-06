@@ -15,7 +15,6 @@ import argparse
 import experiments
 import pickle
 import datetime
-
 import experiments.model
 
 # コマンドライン引数の設定
@@ -34,7 +33,7 @@ def get_args():
     parser.add_argument("--seed", default=0, type=int, help="random seed.")
     parser.add_argument("--dataset", default="AC", type=str, help="dataset name")
     parser.add_argument("--batch", default="1000", type=int, help="batch size")
-    parser.add_argument("--optim", default="lbfgs", type=str, help="optimizer for initialization.", choices=["adam", "lbfgs"])
+    parser.add_argument("--optim", default="adam", type=str, help="optimizer for initialization.", choices=["adam", "lbfgs"])
     parser.add_argument("--max_itr", default=50000, type=int, help="number of iterations for initialization.")
     parser.add_argument("--lr", default=1e-3, type=float, help="learning rate for initialization.")
     parser.add_argument("--itol", default=1e-9, type=float, help="absolute/gradient tolerance for initialization.")

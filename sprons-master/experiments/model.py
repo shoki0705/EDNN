@@ -356,7 +356,7 @@ class EDNNTrainer(nn.Module):
 
         # 初期損失を計算
         with torch.no_grad():
-            predicted_u0 = self.ednn(x0, params)
+            predicted_u0 = self.ednn(x0, params, hidden=False)
         initial_loss = nn.functional.mse_loss(predicted_u0, u0)
         self.logger(f"[{datetime.datetime.now()}] EDNN, Initial Loss: {initial_loss.item():.6e}")
 
@@ -370,7 +370,7 @@ class EDNNTrainer(nn.Module):
 
         # チューニング後の損失を計算
         with torch.no_grad():
-            predicted_u0 = self.ednn(x0, params)
+            predicted_u0 = self.ednn(x0, params, hidden=False)
         final_loss = nn.functional.mse_loss(predicted_u0, u0)
         self.logger(f"[{datetime.datetime.now()}] EDNN, Final Loss: {final_loss.item():.6e}")
         

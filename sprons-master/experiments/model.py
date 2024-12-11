@@ -293,17 +293,13 @@ class EDNNTrainer(nn.Module):
         plt.close()  # プロットを閉じる
 
 
-    def solve_head(self, phi_theta, u0, reg: float = 1e-5, initial_weights=None, initial_bias=None, max_iter=500, tol=1e-6):
+    def solve_head(self, phi_theta, u0, reg: float = 1e-5):
         """
         最小二乗問題を解き、最終層の重みとバイアスを計算する。
 
         :param phi_theta: 最終層への入力 (n_eval, feature_dim)
         :param u0: 真の出力データ (n_eval, 1)
         :param reg: 正則化項の係数
-        :param initial_weights: 既存の重みを初期値として使用 (n_features,)
-        :param initial_bias: 既存のバイアスを初期値として使用 (1,)
-        :param max_iter: LBFGSの最大イテレーション数
-        :param tol: 許容誤差
         :return: 最終層の重み w とバイアス b
         """
         n_eval = phi_theta.shape[0]
@@ -313,42 +309,30 @@ class EDNNTrainer(nn.Module):
         if u0.dim() == 1:
             u0 = u0.unsqueeze(1)  # (n_eval,) -> (n_eval, 1)
 
-        # 入力行列 Phi を構築 (バイアス項のために1列追加)
+        # 入力行列 Phi を構築
         Phi = torch.cat(
             [phi_theta, torch.ones(n_eval, 1, device=self.device, dtype=self.dtype)], dim=1
         )  # (n_eval, n_features + 1)
 
-        # 正則化行列を作成
+        A = Phi.T @ Phi
         if reg > 0:
-            reg_matrix = reg * torch.eye(Phi.size(1), device=self.device, dtype=self.dtype)
-            Phi = torch.cat([Phi, torch.sqrt(reg_matrix)], dim=0)
-            u0 = torch.cat([u0, torch.zeros(reg_matrix.size(0), 1, device=self.device, dtype=self.dtype)], dim=0)
+            reg_matrix = reg * torch.eye(A.size(0), device=self.device, dtype=self.dtype)
+            A += reg_matrix
 
-        # 初期値を設定
-        w_b = torch.zeros(Phi.size(1), device=self.device, dtype=self.dtype)
-        if initial_weights is not None and initial_bias is not None:
-            w_b[:-1] = initial_weights.view(-1)  # 重みを初期値として使用
-            w_b[-1] = initial_bias  # バイアスを初期値として使用
+        b = Phi.T @ u0
 
-        # LBFGS オプティマイザー
-        w_b = w_b.clone().requires_grad_(True)
-        optimizer = torch.optim.LBFGS([w_b], max_iter=max_iter, tolerance_grad=tol, tolerance_change=tol)
+        w_b = torch.linalg.solve(A, b)  # (n_features + 1, 1)
 
-        def closure():
-            optimizer.zero_grad()
-            residual = torch.addmm(u0, Phi, w_b.unsqueeze(1), alpha=-1)  # Phi @ w_b - u0 を計算
-            loss = torch.mean(residual.pow(2))  # MSE損失
-            loss.backward(retain_graph=False)  # 不要な計算グラフの保持を回避
-            return loss
+        # 推定された出力と元のデータの誤差を計算
+        predicted_u0 = Phi @ w_b  # (n_eval, 1)
+        residual_error = (u0 - predicted_u0).norm(p=2).item()
+        self.logger(f"Residual L2 error (||u0 - Phi @ w_b||): {residual_error:.6e}")
 
-
-        optimizer.step(closure)
-
-        # 重みとバイアスを分割
-        w = w_b[:-1].detach()  # 最終層の重み
-        b = w_b[-1].detach()  # 最終層のバイアス
+        w = w_b[:-1].detach()
+        b = w_b[-1].detach()
 
         return w, b
+
 
 
 

@@ -57,6 +57,19 @@ class MLP(nn.Module):
             biases.append(params[itr_stt:itr_end])  # bias
         assert torch.numel(params) == itr_end   # check
         return weights, biases
+    
+    # weightsとbiasesを結合
+    def concat_params(self, weights, biases):
+        params_list = []
+        for w, b in zip(weights, biases):
+            # weightをフラット化
+            params_list.append(w.view(-1))
+            # biasもフラット化
+            params_list.append(b.view(-1))
+        
+        # 全てのパラメータをまとめて1つのテンソルに結合
+        params = torch.cat(params_list)
+        return params
 
 
     #   パラメータの初期化
@@ -323,11 +336,6 @@ class EDNNTrainer(nn.Module):
 
         w_b = torch.linalg.solve(A, b)  # (n_features + 1, 1)
 
-        # 推定された出力と元のデータの誤差を計算
-        predicted_u0 = Phi @ w_b  # (n_eval, 1)
-        residual_error = (u0 - predicted_u0).norm(p=2).item()
-        self.logger(f"Residual L2 error (||u0 - Phi @ w_b||): {residual_error:.6e}")
-
         w = w_b[:-1].detach()
         b = w_b[-1].detach()
 
@@ -356,7 +364,7 @@ class EDNNTrainer(nn.Module):
 
         # 初期損失を計算
         with torch.no_grad():
-            predicted_u0 = self.ednn(x0, params, hidden=False)
+            predicted_u0 = self.ednn(x0, params)
         initial_loss = nn.functional.mse_loss(predicted_u0, u0)
         self.logger(f"[{datetime.datetime.now()}] EDNN, Initial Loss: {initial_loss.item():.6e}")
 
@@ -367,10 +375,12 @@ class EDNNTrainer(nn.Module):
         weights, biases = self.ednn.mlp.segment_params(params)
         weights[-1].copy_(w.view_as(weights[-1]))
         biases[-1].copy_(b)
+        params = self.ednn.mlp.concat_params(weights, biases)
+        
 
         # チューニング後の損失を計算
         with torch.no_grad():
-            predicted_u0 = self.ednn(x0, params, hidden=False)
+            predicted_u0 = self.ednn(x0, params)
         final_loss = nn.functional.mse_loss(predicted_u0, u0)
         self.logger(f"[{datetime.datetime.now()}] EDNN, Final Loss: {final_loss.item():.6e}")
         

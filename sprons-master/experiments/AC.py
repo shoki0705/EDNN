@@ -13,7 +13,7 @@ class Dataset(BASEDataset):
         self.state_dim = 1
         self.x_range = np.array([[-1.0, 1.0]])  # x: 1x512 points, np.linspace(-1,1,513)[:-1]
         self.t_range = np.array([0.0, 1.0])  # t: 1x201 points, around np.linspace(0,1,201)
-
+        
         self.data_x = np.array(data["x"].flatten())[:,None]
         # self.data_t = np.array(data["tt"].flatten())
         self.t_freq = 200
@@ -29,6 +29,7 @@ class Dataset(BASEDataset):
 
         self.is_zero_boundary = False
         self.is_periodic_boundary = True
+        self.initial_condition = None
 
     def get_initial_condition(self):
         return self.x0, self.u0
@@ -42,6 +43,3 @@ class Dataset(BASEDataset):
         u_t = 0.0001 * u_xx - 5 * u**3 + 5 * u
         return u_t
 
-    def get_initial_condition(self, x):
-        return None
-    

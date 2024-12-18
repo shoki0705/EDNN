@@ -57,6 +57,19 @@ class MLP(nn.Module):
             biases.append(params[itr_stt:itr_end])  # bias
         assert torch.numel(params) == itr_end   # check
         return weights, biases
+    
+    # weightsとbiasesを結合
+    def concat_params(self, weights, biases):
+        params_list = []
+        for w, b in zip(weights, biases):
+            # weightをフラット化
+            params_list.append(w.view(-1))
+            # biasもフラット化
+            params_list.append(b.view(-1))
+        
+        # 全てのパラメータをまとめて1つのテンソルに結合
+        params = torch.cat(params_list)
+        return params
 
 
     #   パラメータの初期化
@@ -87,11 +100,16 @@ class MLP(nn.Module):
 
     # 順伝播
     def forward(self, x, params, hidden=False):
+<<<<<<< HEAD
         weights, biases = self.segment_params(params)  
         with_act = [True] * (len(self.units) - 1) + [False]  # 活性化関数の有無
         
         # 最終層への入力を保持する変数
         final_layer_input = None
+=======
+        weights, biases = self.segment_params(params)  # パラメータをweightsとbiasesに分割
+        with_act = [True] * (len(weights) - 1) + [False]  # 活性化関数の有無
+>>>>>>> 9b425cfa2d573fb616f4de3f8b16ef61d964cf4f
 
         # 順伝播
         if self.nonlinearity == "sin":
@@ -103,8 +121,7 @@ class MLP(nn.Module):
                     
                 # 最終層への入力
                 if i == len(weights) - 2 and hidden:
-                    final_layer_input = x.clone()
-                    return final_layer_input
+                    return x
         else:
             for i, (w, b, a) in enumerate(zip(weights, biases, with_act)):
                 x = nn.functional.linear(x, w, b)  # 線形変換
@@ -113,8 +130,7 @@ class MLP(nn.Module):
                     x = self.act(x)
                 # 最終層への入力
                 if i == len(weights) - 2 and hidden:
-                    final_layer_input = x.clone()
-                    return final_layer_input
+                    return x
         
         # 通常の順伝播の出力    
         return x
@@ -185,7 +201,7 @@ class EDNN(nn.Module):
         u = self.mlp(x_norm, params, hidden)
 
         # ゼロ境界条件の場合
-        if self.is_zero_boundary:
+        if self.is_zero_boundary and (not hidden):
             x_pos = (x_norm - x_range[None, :, 0]) / (x_range[None, :, 1] - x_range[None, :, 0])
             u = u * 4 * x_pos * (1 - x_pos)  # u=0 at boundary
 
@@ -295,6 +311,14 @@ class EDNNTrainer(nn.Module):
     def solve_head(self, phi_theta, u0, reg: float = 1e-5):
         """
         最小二乗問題を解き、最終層の重みとバイアスを計算する。
+<<<<<<< HEAD
+=======
+
+        :param phi_theta: 最終層への入力 (n_eval, feature_dim)
+        :param u0: 真の出力データ (n_eval, 1)
+        :param reg: 正則化項の係数
+        :return: 最終層の重み w とバイアス b
+>>>>>>> 9b425cfa2d573fb616f4de3f8b16ef61d964cf4f
         """
         n_eval = phi_theta.shape[0]
         n_features = phi_theta.shape[1]
@@ -303,17 +327,25 @@ class EDNNTrainer(nn.Module):
         if u0.dim() == 1:
             u0 = u0.unsqueeze(1)  # (n_eval,) -> (n_eval, 1)
 
+<<<<<<< HEAD
         # 入力行列 Phi (バイアス項のために1列追加)
+=======
+        # 入力行列 Phi を構築
+>>>>>>> 9b425cfa2d573fb616f4de3f8b16ef61d964cf4f
         Phi = torch.cat(
             [phi_theta, torch.ones(n_eval, 1, device=self.device, dtype=self.dtype)], dim=1
         )  # (n_eval, n_features + 1)
 
+<<<<<<< HEAD
         # 正則化項
+=======
+>>>>>>> 9b425cfa2d573fb616f4de3f8b16ef61d964cf4f
         A = Phi.T @ Phi
         if reg > 0:
             reg_matrix = reg * torch.eye(A.size(0), device=self.device, dtype=self.dtype)
             A += reg_matrix
 
+<<<<<<< HEAD
         # Phi.T @ u0 を計算
         b = Phi.T @ u0
 
@@ -323,8 +355,17 @@ class EDNNTrainer(nn.Module):
         # 重みとバイアスを分割
         w = w_b[:-1].detach()  # 最終層の重み
         b = w_b[-1].detach()  # 最終層のバイアス
+=======
+        b = Phi.T @ u0
+
+        w_b = torch.linalg.solve(A, b)  # (n_features + 1, 1)
+
+        w = w_b[:-1].detach()
+        b = w_b[-1].detach()
+>>>>>>> 9b425cfa2d573fb616f4de3f8b16ef61d964cf4f
 
         return w, b
+
 
 
 
@@ -357,8 +398,16 @@ class EDNNTrainer(nn.Module):
 
         # パラメータに反映
         weights, biases = self.ednn.mlp.segment_params(params)
+<<<<<<< HEAD
         weights[-1].copy_(w.view_as(weights[-1]))  # 重みを更新
         biases[-1].copy_(b)  # バイアスを更新
+=======
+        weights[-1].copy_(w.view_as(weights[-1]))
+        biases[-1].copy_(b)
+        params = self.ednn.mlp.concat_params(weights, biases)
+        params = nn.Parameter(params)
+        
+>>>>>>> 9b425cfa2d573fb616f4de3f8b16ef61d964cf4f
 
         # チューニング後の損失を計算
         with torch.no_grad():
@@ -462,7 +511,7 @@ class EDNNTrainer(nn.Module):
 
                 # プリコンディショナーを計算するクロージャ
                 def preconditioner_closure(v):
-                    
+                  
                     P = self.compute_nystrom_preconditioner(M, reg)
                     # 入力 v が P と同じデバイスにあることを確認
                     if v.device != P.A_hat.U.device:
@@ -509,6 +558,9 @@ class EDNNTrainer(nn.Module):
         """
         # M がバッチ次元を持っている場合は squeeze しておく
         M = M.squeeze(0)
+
+        epsilon = 1e-10
+        M = M + epsilon * torch.eye(M.shape[0], dtype=M.dtype, device=M.device)
         
         linear_operator_M = lo.aslinearoperator(M)
         l_0 = 200
@@ -522,8 +574,7 @@ class EDNNTrainer(nn.Module):
             l_0=l_0,
             l_max=l_max,
             power_iter_count=power_iter_count,
-            error_tol=error_tol,
-            device=self.device,
+            error_tol=error_tol
         )
         
         mu = torch.tensor(reg, dtype=self.dtype, device=self.device)
@@ -597,7 +648,6 @@ class EDNNTrainer(nn.Module):
             self.logger(f"[{datetime.datetime.now()}] EDNN, Integration: time={t.item():.6e}, nfe={self.nfe}, state mean={state.mean()}, var={state.var()}")
         self.nfe += 1
         if self.nfe % self.restart_fleq == 0 and self.nfe != 40000:
-            #print("state_shape", state.shape)
             params_pre = state.reshape(self.params_shape)
             params_new = self.retraining(params_pre, reg=0.0, optim="adam", lr=1e-3, atol=1e-7, max_itr=20000, batch_size=self.batch_size)
             state = params_new.reshape(1, -1)

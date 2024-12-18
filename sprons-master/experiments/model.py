@@ -58,6 +58,9 @@ class MLP(nn.Module):
         assert torch.numel(params) == itr_end   # check
         return weights, biases
     
+    
+    
+    
     # weightsとbiasesを結合
     def concat_params(self, weights, biases):
         params_list = []
@@ -102,7 +105,7 @@ class MLP(nn.Module):
     def forward(self, x, params, hidden=False):
 <<<<<<< HEAD
         weights, biases = self.segment_params(params)  
-        with_act = [True] * (len(self.units) - 1) + [False]  # 活性化関数の有無
+        with_act = [True] * (len(weights) - 1) + [False]  # 活性化関数の有無
         
         # 最終層への入力を保持する変数
         final_layer_input = None

@@ -66,7 +66,6 @@ class MLP(nn.Module):
         #   活性化関数に応じた初期化
         try:
             gain = torch.nn.init.calculate_gain(self.nonlinearity)
-        #   例外処理
         except:
             gain = 1.0
         #   重みの初期化
@@ -82,13 +81,13 @@ class MLP(nn.Module):
 
     #   初期パラメータの取得
     def get_init_params(self):
-        theta = torch.zeros(self.n_params)  # パラメータ数のゼロテンソル
-        self.init_params(theta) # パラメータの初期化
+        theta = torch.zeros(self.n_params)  
+        self.init_params(theta)
         return theta
 
     # 順伝播
     def forward(self, x, params, hidden=False):
-        weights, biases = self.segment_params(params)  # パラメータをweightsとbiasesに分割
+        weights, biases = self.segment_params(params)  
         with_act = [True] * (len(self.units) - 1) + [False]  # 活性化関数の有無
         
         # 最終層への入力を保持する変数
@@ -102,7 +101,7 @@ class MLP(nn.Module):
                     omega = 30 if i == 0 else 1  # 入力層では w=30、隠れ層では w=1
                     x = torch.sin(omega * x)  # サイン活性化関数を適用
                     
-                # 最終層への入力を返す
+                # 最終層への入力
                 if i == len(weights) - 2 and hidden:
                     final_layer_input = x.clone()
                     return final_layer_input
@@ -112,12 +111,12 @@ class MLP(nn.Module):
                 # 活性化関数があれば適用
                 if a:
                     x = self.act(x)
-                # 最終層への入力を返す
+                # 最終層への入力
                 if i == len(weights) - 2 and hidden:
                     final_layer_input = x.clone()
                     return final_layer_input
         
-        # 通常の順伝播の出力を返す
+        # 通常の順伝播の出力    
         return x
 
     
@@ -137,7 +136,7 @@ class EDNN(nn.Module):
         space_normalization: bool = True,   # 空間の正規化
     ):
         super(EDNN, self).__init__()    # 親コンストラクタ
-        assert not (is_periodic_boundary and is_zero_boundary)  # 周期境界条件とゼロ境界条件は同時に指定できない
+        assert not (is_periodic_boundary and is_zero_boundary)  # 周期境界条件とゼロ境界条件は同時に指定不可
         assert not is_periodic_boundary or space_normalization  # 周期境界条件 -> 空間の正規化
 
         # x_range: [x1,x2,...] x [min, max]
@@ -293,18 +292,9 @@ class EDNNTrainer(nn.Module):
         plt.close()  # プロットを閉じる
 
 
-    def solve_head(self, phi_theta, u0, reg: float = 1e-5, initial_weights=None, initial_bias=None, max_iter=500, tol=1e-6):
+    def solve_head(self, phi_theta, u0, reg: float = 1e-5):
         """
         最小二乗問題を解き、最終層の重みとバイアスを計算する。
-
-        :param phi_theta: 最終層への入力 (n_eval, feature_dim)
-        :param u0: 真の出力データ (n_eval, 1)
-        :param reg: 正則化項の係数
-        :param initial_weights: 既存の重みを初期値として使用 (n_features,)
-        :param initial_bias: 既存のバイアスを初期値として使用 (1,)
-        :param max_iter: LBFGSの最大イテレーション数
-        :param tol: 許容誤差
-        :return: 最終層の重み w とバイアス b
         """
         n_eval = phi_theta.shape[0]
         n_features = phi_theta.shape[1]
@@ -313,36 +303,22 @@ class EDNNTrainer(nn.Module):
         if u0.dim() == 1:
             u0 = u0.unsqueeze(1)  # (n_eval,) -> (n_eval, 1)
 
-        # 入力行列 Phi を構築 (バイアス項のために1列追加)
+        # 入力行列 Phi (バイアス項のために1列追加)
         Phi = torch.cat(
             [phi_theta, torch.ones(n_eval, 1, device=self.device, dtype=self.dtype)], dim=1
         )  # (n_eval, n_features + 1)
 
-        # 正則化行列を作成
+        # 正則化項
+        A = Phi.T @ Phi
         if reg > 0:
-            reg_matrix = reg * torch.eye(Phi.size(1), device=self.device, dtype=self.dtype)
-            Phi = torch.cat([Phi, torch.sqrt(reg_matrix)], dim=0)
-            u0 = torch.cat([u0, torch.zeros(reg_matrix.size(0), 1, device=self.device, dtype=self.dtype)], dim=0)
+            reg_matrix = reg * torch.eye(A.size(0), device=self.device, dtype=self.dtype)
+            A += reg_matrix
 
-        # 初期値を設定
-        w_b = torch.zeros(Phi.size(1), device=self.device, dtype=self.dtype)
-        if initial_weights is not None and initial_bias is not None:
-            w_b[:-1] = initial_weights.view(-1)  # 重みを初期値として使用
-            w_b[-1] = initial_bias  # バイアスを初期値として使用
+        # Phi.T @ u0 を計算
+        b = Phi.T @ u0
 
-        # LBFGS オプティマイザー
-        w_b = w_b.clone().requires_grad_(True)
-        optimizer = torch.optim.LBFGS([w_b], max_iter=max_iter, tolerance_grad=tol, tolerance_change=tol)
-
-        def closure():
-            optimizer.zero_grad()
-            residual = torch.addmm(u0, Phi, w_b.unsqueeze(1), alpha=-1)  # Phi @ w_b - u0 を計算
-            loss = torch.mean(residual.pow(2))  # MSE損失
-            loss.backward(retain_graph=False)  # 不要な計算グラフの保持を回避
-            return loss
-
-
-        optimizer.step(closure)
+        # 解を計算
+        w_b = torch.linalg.solve(A, b)  # (n_features + 1, 1)
 
         # 重みとバイアスを分割
         w = w_b[:-1].detach()  # 最終層の重み
@@ -379,10 +355,10 @@ class EDNNTrainer(nn.Module):
         # 最小二乗問題を解く
         w, b = self.solve_head(phi_theta, u0, hreg)
 
-        # パラメータを更新
+        # パラメータに反映
         weights, biases = self.ednn.mlp.segment_params(params)
-        weights[-1].copy_(w.view_as(weights[-1]))
-        biases[-1].copy_(b)
+        weights[-1].copy_(w.view_as(weights[-1]))  # 重みを更新
+        biases[-1].copy_(b)  # バイアスを更新
 
         # チューニング後の損失を計算
         with torch.no_grad():

@@ -102,6 +102,8 @@ def main(args):
         data_t = np.linspace(0, t_range[-1], int(t_range[-1] * t_freq * args.substeps + 1))
     else:
         data_t = np.arange(0, t_range[-1] + t_range[-1] / (t_freq * args.substeps), t_range[-1] / (t_freq * args.substeps))
+        
+    
 
     # logger
     logging_file = open(f"{args.result_path}.log", "w")

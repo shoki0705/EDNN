@@ -102,10 +102,7 @@ class MLP(nn.Module):
     # 順伝播
     def forward(self, x, params, hidden=False):
         weights, biases = self.segment_params(params)  # パラメータをweightsとbiasesに分割
-        with_act = [True] * (len(self.units) - 1) + [False]  # 活性化関数の有無
-        
-        # 最終層への入力を保持する変数
-        final_layer_input = None
+        with_act = [True] * (len(weights) - 1) + [False]  # 活性化関数の有無
 
         # 順伝播
         if self.nonlinearity == "sin":
@@ -117,8 +114,7 @@ class MLP(nn.Module):
                     
                 # 最終層への入力を返す
                 if i == len(weights) - 2 and hidden:
-                    final_layer_input = x.clone()
-                    return final_layer_input
+                    return x
         else:
             for i, (w, b, a) in enumerate(zip(weights, biases, with_act)):
                 x = nn.functional.linear(x, w, b)  # 線形変換
@@ -127,8 +123,7 @@ class MLP(nn.Module):
                     x = self.act(x)
                 # 最終層への入力を返す
                 if i == len(weights) - 2 and hidden:
-                    final_layer_input = x.clone()
-                    return final_layer_input
+                    return x
         
         # 通常の順伝播の出力を返す
         return x
@@ -199,7 +194,7 @@ class EDNN(nn.Module):
         u = self.mlp(x_norm, params, hidden)
 
         # ゼロ境界条件の場合
-        if self.is_zero_boundary:
+        if self.is_zero_boundary and (not hidden):
             x_pos = (x_norm - x_range[None, :, 0]) / (x_range[None, :, 1] - x_range[None, :, 0])
             u = u * 4 * x_pos * (1 - x_pos)  # u=0 at boundary
 
@@ -376,6 +371,7 @@ class EDNNTrainer(nn.Module):
         weights[-1].copy_(w.view_as(weights[-1]))
         biases[-1].copy_(b)
         params = self.ednn.mlp.concat_params(weights, biases)
+        params = nn.Parameter(params)
         
 
         # チューニング後の損失を計算
@@ -480,7 +476,7 @@ class EDNNTrainer(nn.Module):
 
                 # プリコンディショナーを計算するクロージャ
                 def preconditioner_closure(v):
-                    
+                  
                     P = self.compute_nystrom_preconditioner(M, reg)
                     # 入力 v が P と同じデバイスにあることを確認
                     if v.device != P.A_hat.U.device:
@@ -527,6 +523,9 @@ class EDNNTrainer(nn.Module):
         """
         # M がバッチ次元を持っている場合は squeeze しておく
         M = M.squeeze(0)
+
+        epsilon = 1e-10
+        M = M + epsilon * torch.eye(M.shape[0], dtype=M.dtype, device=M.device)
         
         linear_operator_M = lo.aslinearoperator(M)
         l_0 = 200
@@ -540,8 +539,7 @@ class EDNNTrainer(nn.Module):
             l_0=l_0,
             l_max=l_max,
             power_iter_count=power_iter_count,
-            error_tol=error_tol,
-            device=self.device,
+            error_tol=error_tol
         )
         
         mu = torch.tensor(reg, dtype=self.dtype, device=self.device)
@@ -615,7 +613,6 @@ class EDNNTrainer(nn.Module):
             self.logger(f"[{datetime.datetime.now()}] EDNN, Integration: time={t.item():.6e}, nfe={self.nfe}, state mean={state.mean()}, var={state.var()}")
         self.nfe += 1
         if self.nfe % self.restart_fleq == 0 and self.nfe != 40000:
-            #print("state_shape", state.shape)
             params_pre = state.reshape(self.params_shape)
             params_new = self.retraining(params_pre, reg=0.0, optim="adam", lr=1e-3, atol=1e-7, max_itr=20000, batch_size=self.batch_size)
             state = params_new.reshape(1, -1)

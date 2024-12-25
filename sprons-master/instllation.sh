@@ -7,3 +7,6 @@ pip install torchdiffeq==0.2.3
 pip install torchdyn==1.0.6
 pip install linear_operator==0.5.3
 pip install torch-linops==0.1.3
+pip install cola-ml
+pip install -U "jax[cuda12]"
+

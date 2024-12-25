@@ -1,5 +1,3 @@
-import scipy
-import scipy.sparse.linalg
 import sys
 import numpy as np
 import torch
@@ -13,6 +11,9 @@ import linops as lo
 import math
 from dataclasses import dataclass
 from linear_operator.utils.linear_cg import linear_cg
+from scipy.sparse.linalg import gmres, qmr
+from cola.linalg.inverse.gmres import GMRES, gmres, gmres_fwd
+from cola.ops import Dense
 
 
 
@@ -130,7 +131,6 @@ class MLP(nn.Module):
         # 通常の順伝播の出力    
         return x
 
-    
 
 class EDNN(nn.Module):
     def __init__(
@@ -449,6 +449,8 @@ class EDNNTrainer(nn.Module):
                 else:
                     deriv = torch.linalg.solve(M, a)
                     
+                print("derivの形状",deriv.shape)
+                    
             
             elif method == "gpytorchCG":
 
@@ -478,7 +480,7 @@ class EDNNTrainer(nn.Module):
 
                 # プリコンディショナーを計算するクロージャ
                 def preconditioner_closure(v):
-                  
+                
                     P = self.compute_nystrom_preconditioner(M, reg)
                     # 入力 v が P と同じデバイスにあることを確認
                     if v.device != P.A_hat.U.device:
@@ -509,6 +511,24 @@ class EDNNTrainer(nn.Module):
 
                 # プリコンディショナー付き共役勾配法
                 deriv = linear_cg(matmul_closure, a, tolerance=tol, max_iter=max_iter, preconditioner=preconditioner_closure)
+                
+                
+                
+            elif method == "GMRES":
+                M = M.squeeze(0)
+                a = a.squeeze(0)
+                M = Dense(M)
+                deriv, info = gmres(M, a, max_iters=1000, tol=1e-6)
+                deriv = deriv.unsqueeze(0)
+                
+            elif method == "QMR":
+                M = M.squeeze(0)
+                M = M.cpu().numpy()
+                a = a.squeeze(0)
+                a = a.cpu().numpy()
+                deriv, info = qmr(M, a, tol=1e-6)
+                deriv = torch.tensor(deriv, dtype=self.dtype, device=self.device)
+                deriv = deriv.unsqueeze(0)
 
                                             
             else:
@@ -527,11 +547,12 @@ class EDNNTrainer(nn.Module):
         M = M.squeeze(0)
 
         epsilon = 1e-10
-        M = M + epsilon * torch.eye(M.shape[0], dtype=M.dtype, device=M.device)
+        M.diagonal().add_(epsilon)  # 対角成分に epsilon を加算
         
         linear_operator_M = lo.aslinearoperator(M)
-        l_0 = 200
-        l_max = 350
+        linear_operator_M.device = M.device
+        l_0 = 100
+        l_max = 400
         power_iter_count = 2  # パワーイテレーションの回数
         error_tol = 1e-6  # 許容誤差
         
@@ -548,6 +569,8 @@ class EDNNTrainer(nn.Module):
         P = lo.nystrom_precondition.NystromPreconditioner(A_hat=M_hat, mu=mu)
         
         return P
+    
+    
 
 
 

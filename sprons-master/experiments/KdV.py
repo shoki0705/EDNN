@@ -33,6 +33,7 @@ class Dataset(BASEDataset):
 
         self.is_zero_boundary = False
         self.is_periodic_boundary = True
+        self.initial_condition = None
 
     def get_initial_condition(self):
         return self.x0, self.u0

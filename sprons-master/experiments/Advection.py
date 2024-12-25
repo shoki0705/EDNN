@@ -9,7 +9,7 @@ class Dataset(BASEDataset):
     def __init__(self, base_dir: str, N0: int = 0):
         # 定数の定義
         c = 1.0  # 移流速度
-        Nx = 10000  # 空間方向のポイント数
+        Nx = 512  # 空間方向のポイント数
         Nt = 201  # 時間方向のポイント数
 
         # 空間・時間の離散化

@@ -12,9 +12,10 @@ import math
 from dataclasses import dataclass
 from linear_operator.utils.linear_cg import linear_cg
 from scipy.sparse.linalg import gmres, qmr
-from cola.linalg.inverse.gmres import GMRES, gmres, gmres_fwd
+from cola.linalg.inverse.gmres import gmres
+from cola.linalg.inverse.cg import cg
 from cola.ops import Dense
-
+from cola.linalg.preconditioning.preconditioners import NystromPrecond
 
 
 
@@ -218,7 +219,7 @@ class EDNNTrainer(nn.Module):
     #   コンストラクタ
     def __init__(self, ednn, log_freq=100, restart_fleq=400, logger=print):
         super(EDNNTrainer, self).__init__()
-        self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        self.device = "cuda:1" if torch.cuda.is_available() else "cpu"
         self.dtype = torch.get_default_dtype()  # data type=float64
 
         self.ednn = ednn.to(device=self.device)   # モデルをGPUに転送
@@ -449,70 +450,24 @@ class EDNNTrainer(nn.Module):
                 else:
                     deriv = torch.linalg.solve(M, a)
                     
-                print("derivの形状",deriv.shape)
-                    
-            
-            elif method == "gpytorchCG":
-
-                # ヤコビアンの積を計算するクロージャを定義
-                def matmul_closure(v):
-                    
-                    return torch.einsum("dij,dj->di", (M, v))
-
-                # GPyTorchのlinear_cgを用いて解を計算
-                max_iter = 1000
-                tol = 1e-6
-
-                deriv = linear_cg(matmul_closure, a, tolerance=tol, max_iter=max_iter)
+                
+            elif method == "NysPCG":
+                M = M.squeeze(0)
+                a = a.squeeze(0)
+                M = Dense(M)
+                Nys = NystromPrecond(M, 200)
+                P = Nys @ torch.eye(M.shape[0], M.shape[0], dtype=self.dtype, device=self.device)
+                deriv, info = cg(A=M, rhs=a, P=P, max_iters=1000, tol=1e-6)
+                deriv = deriv.unsqueeze(0)
                 
                 
-            elif method == "PreCG":
                 
-                reg=1e-6
-
-                # ヤコビアンの積を計算するクロージャを定義
-                def matmul_closure(v):
-                    
-                    if v.dim() == 1:
-                        v = v.unsqueeze(0)
-                    
-                    return torch.einsum("dij,dj->di", (M, v))
-
-                # プリコンディショナーを計算するクロージャ
-                def preconditioner_closure(v):
-                
-                    P = self.compute_nystrom_preconditioner(M, reg)
-                    # 入力 v が P と同じデバイスにあることを確認
-                    if v.device != P.A_hat.U.device:
-                        v = v.to(P.A_hat.U.device)
-                    
-                    
-                    if v.dim() == 2 and v.size(0) == 1:
-                        v = v.squeeze(0)
-                    
-                    # P_inv(v) を計算
-                    U = P.A_hat.U
-                    Lambda_hat = P.A_hat.Lambda_hat
-                    mu = P.mu
-
-                    # プリコンディショナーを適用 (P^{-1}v)
-                    v_projected = U.T @ v  # U^T @ v
-                    scaled_projection = (v_projected / (Lambda_hat + mu))  # スケーリング
-                    preconditioned_v = U @ scaled_projection + (v - U @ v_projected)
-
-                    preconditioned_v = preconditioned_v.unsqueeze(0)
-                    
-                    return preconditioned_v
-
-
-                # GPyTorchのlinear_cgを用いて解を計算
-                max_iter = 1000
-                tol = 1e-6
-
-                # プリコンディショナー付き共役勾配法
-                deriv = linear_cg(matmul_closure, a, tolerance=tol, max_iter=max_iter, preconditioner=preconditioner_closure)
-                
-                
+            elif method == "CG":
+                M = M.squeeze(0)
+                a = a.squeeze(0)
+                M = Dense(M)
+                deriv, info = cg(M, a, max_iters=1000, tol=1e-6)
+                deriv = deriv.unsqueeze(0)
                 
             elif method == "GMRES":
                 M = M.squeeze(0)
@@ -538,37 +493,6 @@ class EDNNTrainer(nn.Module):
     
     
     
-    
-    def compute_nystrom_preconditioner(self, M, reg=1e-6):
-        """
-        ランダム化Nystromプリコンディショナーを計算する。
-        """
-        # M がバッチ次元を持っている場合は squeeze しておく
-        M = M.squeeze(0)
-
-        epsilon = 1e-10
-        M.diagonal().add_(epsilon)  # 対角成分に epsilon を加算
-        
-        linear_operator_M = lo.aslinearoperator(M)
-        linear_operator_M.device = M.device
-        l_0 = 100
-        l_max = 400
-        power_iter_count = 2  # パワーイテレーションの回数
-        error_tol = 1e-6  # 許容誤差
-        
-        
-        M_hat = lo.nystrom_precondition.construct_approximation(
-            A=linear_operator_M,
-            l_0=l_0,
-            l_max=l_max,
-            power_iter_count=power_iter_count,
-            error_tol=error_tol
-        )
-        
-        mu = torch.tensor(reg, dtype=self.dtype, device=self.device)
-        P = lo.nystrom_precondition.NystromPreconditioner(A_hat=M_hat, mu=mu)
-        
-        return P
     
     
 

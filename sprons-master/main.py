@@ -39,13 +39,13 @@ def get_args():
     parser.add_argument("--itol", default=1e-9, type=float, help="absolute/gradient tolerance for initialization.")
     parser.add_argument("--hreg", default=1e-5, type=float, help="regularizer for parameters in head tuning.")
     # integration
-    parser.add_argument("--method", default="PreCG", type=str, help="method to obtain gradient.", choices=["optimization", "inversion", "collocation", "gelsd", "CG", "NysPCG", "GMRES", "QMR"])
+    parser.add_argument("--method", default="PreCG", type=str, help="method to obtain gradient.", choices=["optimization", "inversion", "collocation", "gelsd", "CG", "NysPCG", "GMRES", "QMR", "SVRG"])
     parser.add_argument("--solver", default="rk4", type=str, help="numerical integrator.")
     parser.add_argument("--n_eval", default=2000, type=int, help="number of collocation points for solver. Set 0 to use the default points.")
     parser.add_argument("--atol", default=1e-3, type=float, help="absolute tolerance for solver.")
     parser.add_argument("--rtol", default=1e-4, type=float, help="relative tolerance for solver.")
     parser.add_argument("--substeps", default=50, type=int, help="number of substeps for solver.")
-    parser.add_argument("--restart_fleq",default=4000, type=int, help="restart frequency for EDNN.")
+    parser.add_argument("--restart_times",default=10, type=int, help="restart times for EDNN.")
     # display
     parser.add_argument("--log_freq", default=200, type=int, help="number of steps between prints.")
     parser.add_argument("--verbose", dest="verbose", action="store_true", help="verbose?.")
@@ -67,7 +67,7 @@ def get_args():
     label += f"-sinusoidal{args.sinusoidal}"
     label += f"-headtuning{args.head_tuning}"
     label += f"-{args.optim}" 
-    label += f"-{args.restart_fleq}"
+    label += f"-{args.restart_times}"
     label += f"-{args.postfix}" if args.postfix else ""
     label += f"-seed{args.seed}"
     args.result_path = f"{args.experiment_dir}/{args.result_dir}/{label}"
@@ -110,7 +110,7 @@ def main(args):
     logger = lambda *args: print(*args) or print(*args, flush=True, file=logging_file)
 
     # training initial condition
-    trainer = experiments.model.EDNNTrainer(ednn, log_freq=args.log_freq, restart_fleq=args.restart_fleq, logger=logger)
+    trainer = experiments.model.EDNNTrainer(ednn, log_freq=args.log_freq, restart_times=args.restart_times, logger=logger)
     params = trainer.learn_initial_condition(x0, u0, reg=args.ireg, optim=args.optim, lr=args.lr, atol=args.itol, max_itr=args.max_itr, batch_size=args.batch)
     
     # Head Tuning

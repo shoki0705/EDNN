@@ -14,8 +14,9 @@ from linear_operator.utils.linear_cg import linear_cg
 from scipy.sparse.linalg import gmres, qmr
 from cola.linalg.inverse.gmres import gmres
 from cola.linalg.inverse.cg import cg
-from cola.ops import Dense
+from cola.ops import Dense, Sum
 from cola.linalg.preconditioning.preconditioners import NystromPrecond
+from cola.linalg.tbd.svrg import solve_svrg_symmetric
 
 
 
@@ -217,14 +218,15 @@ class EDNN(nn.Module):
 class EDNNTrainer(nn.Module):
 
     #   コンストラクタ
-    def __init__(self, ednn, log_freq=100, restart_fleq=400, logger=print):
+    def __init__(self, ednn, log_freq=100, restart_times=10, logger=print):
         super(EDNNTrainer, self).__init__()
-        self.device = "cuda:1" if torch.cuda.is_available() else "cpu"
+        self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
         self.dtype = torch.get_default_dtype()  # data type=float64
 
         self.ednn = ednn.to(device=self.device)   # モデルをGPUに転送
         self.log_freq = log_freq    # ログの頻度
-        self.restart_fleq = restart_fleq    # リスタートの頻度
+        self.restart_times = restart_times    # リスタートの頻度
+        self.restart_flag = [True]*restart_times    # リスタートフラグ
         self.nfe = 0    # 評価回数
         self.logger = logger    # ログ出力
         self.logger(f"[{datetime.datetime.now()}] EDNN, Initialized: The number of parameters is ", self.ednn.mlp.n_params)
@@ -455,12 +457,10 @@ class EDNNTrainer(nn.Module):
                 M = M.squeeze(0)
                 a = a.squeeze(0)
                 M = Dense(M)
-                Nys = NystromPrecond(M, 200)
+                Nys = NystromPrecond(M, rank=250, mu=1e-6)
                 P = Nys @ torch.eye(M.shape[0], M.shape[0], dtype=self.dtype, device=self.device)
                 deriv, info = cg(A=M, rhs=a, P=P, max_iters=1000, tol=1e-6)
                 deriv = deriv.unsqueeze(0)
-                
-                
                 
             elif method == "CG":
                 M = M.squeeze(0)
@@ -484,7 +484,16 @@ class EDNNTrainer(nn.Module):
                 deriv, info = qmr(M, a, tol=1e-6)
                 deriv = torch.tensor(deriv, dtype=self.dtype, device=self.device)
                 deriv = deriv.unsqueeze(0)
-
+                
+            elif method == "SVRG":
+                M = M.squeeze(0)
+                a = a.squeeze(0)
+                M = Dense(M)
+                Nys = NystromPrecond(M, 200)
+                components = [Dense(J[b_idx].T @ J[b_idx]) for b_idx in range(J.shape[0])]  # 各バッチで計算
+                M_sum = Sum(*components)
+                P = Nys @ torch.eye(M.shape[0], M.shape[0], dtype=self.dtype, device=self.device)
+                deriv, _ = solve_svrg_symmetric(M_sum, a, tol=1e-6, P=P)
                                             
             else:
                 raise NotImplementedError(method)
@@ -550,6 +559,8 @@ class EDNNTrainer(nn.Module):
         loss = nn.functional.mse_loss(self.ednn(x0, params), u0)
         self.logger(f"[{datetime.datetime.now()}] EDNN, Re-training: IC finished, Loss: {loss.item():.6e}")
 
+        torch.cuda.empty_cache()
+        
         return params.data
 
 
@@ -561,10 +572,29 @@ class EDNNTrainer(nn.Module):
             assert t.numel() == 1
             self.logger(f"[{datetime.datetime.now()}] EDNN, Integration: time={t.item():.6e}, nfe={self.nfe}, state mean={state.mean()}, var={state.var()}")
         self.nfe += 1
-        if self.nfe % self.restart_fleq == 0 and self.nfe != 40000:
+        # 最初に利用可能なリスタートフラグを見つける
+        restart_idx = self.restart_flag.index(True)
+        
+        if t.item() > float((restart_idx+1)/self.restart_times)  and any(self.restart_flag):
+            self.logger(f"[{datetime.datetime.now()}] EDNN, Restart condition")
+            # 現在のパラメータを取得
             params_pre = state.reshape(self.params_shape)
-            params_new = self.retraining(params_pre, reg=0.0, optim="adam", lr=1e-3, atol=1e-7, max_itr=20000, batch_size=self.batch_size)
+            # リスタート（再訓練）を実行
+            params_new = self.retraining(
+                params_pre, 
+                reg=0.0, 
+                optim="adam", 
+                lr=1e-3, 
+                atol=1e-7, 
+                max_itr=10, 
+                batch_size=self.batch_size
+            )
+            # 新しいパラメータをstateに設定
             state = params_new.reshape(1, -1)
+            self.logger(f"[{datetime.datetime.now()}] EDNN, Restarted: Updated parameters.")
+
+            # 使用済みのリスタートフラグを無効化
+            self.restart_flag[restart_idx] = False
         
         equation = self.integration_params["equation"]
         method = self.integration_params["method"]

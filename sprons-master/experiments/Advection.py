@@ -14,7 +14,7 @@ class Dataset(BASEDataset):
 
         # 空間・時間の離散化
         x = np.linspace(-1.0, 1.0, Nx)
-        t = np.linspace(0.0, 0.5, Nt)
+        t = np.linspace(0.0, 1.0, Nt)
 
         # メッシュグリッドの作成
         X, T = np.meshgrid(x, t)

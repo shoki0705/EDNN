@@ -39,7 +39,7 @@ def get_args():
     parser.add_argument("--itol", default=1e-9, type=float, help="absolute/gradient tolerance for initialization.")
     parser.add_argument("--hreg", default=1e-5, type=float, help="regularizer for parameters in head tuning.")
     # integration
-    parser.add_argument("--method", default="PreCG", type=str, help="method to obtain gradient.", choices=["optimization", "inversion", "collocation", "gelsd", "CG", "NysPCG", "GMRES", "QMR", "SVRG"])
+    parser.add_argument("--method", default="PreCG", type=str, help="method to obtain gradient.", choices=["optimization", "inversion", "collocation", "gelsd", "CG", "NysPCG", "GMRES", "QMR", "SVRG", "broyden"])
     parser.add_argument("--solver", default="rk4", type=str, help="numerical integrator.")
     parser.add_argument("--n_eval", default=2000, type=int, help="number of collocation points for solver. Set 0 to use the default points.")
     parser.add_argument("--atol", default=1e-3, type=float, help="absolute tolerance for solver.")

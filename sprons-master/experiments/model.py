@@ -457,7 +457,7 @@ class EDNNTrainer(nn.Module):
                 M = M.squeeze(0)
                 a = a.squeeze(0)
                 M = Dense(M)
-                Nys = NystromPrecond(M, rank=250, mu=1e-6)
+                Nys = NystromPrecond(M, rank=100, mu=1e-6)
                 P = Nys @ torch.eye(M.shape[0], M.shape[0], dtype=self.dtype, device=self.device)
                 deriv, info = cg(A=M, rhs=a, P=P, max_iters=1000, tol=1e-6)
                 deriv = deriv.unsqueeze(0)
@@ -494,17 +494,25 @@ class EDNNTrainer(nn.Module):
                 M_sum = Sum(*components)
                 P = Nys @ torch.eye(M.shape[0], M.shape[0], dtype=self.dtype, device=self.device)
                 deriv, _ = solve_svrg_symmetric(M_sum, a, tol=1e-6, P=P)
+                
+            elif method == "broyden":
+                M = M.squeeze(0)
+                a = a.squeeze(0)
+                # 初期推定値 x0 を設定
+                x0 = torch.zeros((n, 1))  # 初期値をゼロベクトルとする
+
+                # Broyden法の設定
+                threshold = 50  # 最大反復回数
+                eps = 1e-6  # 収束条件
+                stop_mode = "rel"  # 収束判定のモード
+                ls = False  # ラインサーチの有効化（今回は無効化）
+                deriv= broyden(f, x0, threshold=threshold, eps=eps, stop_mode=stop_mode, ls=ls)
+                deriv = deriv.unsqueeze(0)
                                             
             else:
                 raise NotImplementedError(method)
 
         return deriv
-    
-    
-    
-    
-    
-
 
 
         # モデルの再学習
@@ -586,7 +594,7 @@ class EDNNTrainer(nn.Module):
                 optim="adam", 
                 lr=1e-3, 
                 atol=1e-7, 
-                max_itr=10, 
+                max_itr=10000, 
                 batch_size=self.batch_size
             )
             # 新しいパラメータをstateに設定

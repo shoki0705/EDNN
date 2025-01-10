@@ -17,6 +17,7 @@ from cola.linalg.inverse.cg import cg
 from cola.ops import Dense, Sum
 from cola.linalg.preconditioning.preconditioners import NystromPrecond
 from cola.linalg.tbd.svrg import solve_svrg_symmetric
+from deq.lib.solvers import broyden
 
 
 
@@ -220,7 +221,7 @@ class EDNNTrainer(nn.Module):
     #   コンストラクタ
     def __init__(self, ednn, log_freq=100, restart_times=10, logger=print):
         super(EDNNTrainer, self).__init__()
-        self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        self.device = "cuda:1" if torch.cuda.is_available() else "cpu"
         self.dtype = torch.get_default_dtype()  # data type=float64
 
         self.ednn = ednn.to(device=self.device)   # モデルをGPUに転送
@@ -394,24 +395,26 @@ class EDNNTrainer(nn.Module):
     #   時間微分の計算
     def get_time_derivative(self, equation, params, method, x, reg):
         params = params.flatten()  # remove batch axis added by torchdiffeq
-
+        
         #  時間微分
         with torch.set_grad_enabled(True):
             x = x.requires_grad_(True)
             # dim(u) x batch
             u_t = equation(self.ednn(x, params), x).T
-
+            
         params_to_u = lambda params: self.ednn(x, params)
+
         # dim(u) x batch x dim(params)
         J_T = torch.autograd.functional.jacobian(params_to_u, params)   # ヤコビ行列の転置
         assert isinstance(J_T, torch.Tensor)    # ヤコビ行列がテンソルであることを確認
-        J = J_T.transpose(0, 1) # ヤコビ行列
+        J = J_T.transpose(0, 1)  # ヤコビ行列
         # u_tとJの正則化
         if reg > 0:
             u_dim = u_t.shape[0]
-            n_param = params.shape[0]
+            n_param = params.shape[0]  
             v = torch.zeros([u_dim, n_param], device=u_t.device, dtype=u_t.dtype)
             K = np.sqrt(reg / u_dim) * torch.eye(n_param, device=u_t.device, dtype=u_t.dtype).expand(u_dim, -1, -1)
+
         if method == "collocation":
             if reg > 0:
                 u_t = torch.cat([u_t, v], dim=1)
@@ -499,15 +502,18 @@ class EDNNTrainer(nn.Module):
                 M = M.squeeze(0)
                 a = a.squeeze(0)
                 # 初期推定値 x0 を設定
-                x0 = torch.zeros((n, 1))  # 初期値をゼロベクトルとする
+                x0 = torch.zeros([M.shape[0], 1], device=u_t.device, dtype=u_t.dtype)  # 初期値をゼロベクトルとする
+                x0 = x0.unsqueeze(0) 
+                
+                f = lambda x: M @ x - a
 
                 # Broyden法の設定
                 threshold = 50  # 最大反復回数
                 eps = 1e-6  # 収束条件
                 stop_mode = "rel"  # 収束判定のモード
-                ls = False  # ラインサーチの有効化（今回は無効化）
+                ls = False  # ラインサーチの有効化
                 deriv= broyden(f, x0, threshold=threshold, eps=eps, stop_mode=stop_mode, ls=ls)
-                deriv = deriv.unsqueeze(0)
+                deriv = deriv.unsqueeze(1)
                                             
             else:
                 raise NotImplementedError(method)

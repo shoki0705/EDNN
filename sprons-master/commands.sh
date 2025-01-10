@@ -1,1 +1,1 @@
-python main.py --dataset KdV --optim adam --max_itr 20000 --atol 1e-6 --method NysPCG --head_tuning 1 --restart_times 10 --solver rk4 --rtol 1e-4 --n_eval 2000 --lr 1e-3
+python main.py --dataset KdV --optim adam --max_itr 20000 --atol 1e-6 --method NysPCG --head_tuning 1 --restart_times 400 --solver rk4 --rtol 1e-4 --n_eval 2000 --lr 1e-3

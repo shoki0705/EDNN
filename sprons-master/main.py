@@ -6,7 +6,7 @@ torch.backends.cudnn.deterministic = False  # Trueで再現性が高まるが遅
 torch.backends.cudnn.benchmark = True   # Trueでアルゴリズム選択の最適化を行う
 torch.backends.cuda.matmul.allow_tf32 = False   # TrueでTF32(低精度高速)を許可
 torch.backends.cudnn.allow_tf32 = False # TrueでCuDNNにTF32(低精度高速)を許可
-torch.set_grad_enabled(False)   # 勾配計算を行わない
+torch.set_grad_enabled(True)   # 勾配計算を行わない
 torch.set_default_dtype(torch.float64)  # デフォルトのテンソル型を設定
 import numpy as np
 import os

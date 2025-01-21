@@ -191,7 +191,7 @@ class EDNNTrainer(nn.Module):
 
     def __init__(self, ednn, log_freq=100, restart_times=10, logger=print):
         super(EDNNTrainer, self).__init__()
-        self.device = "cuda:1" if torch.cuda.is_available() else "cpu"
+        self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
         self.dtype = torch.get_default_dtype()
         self.ednn = ednn.to(device=self.device)
         self.log_freq = log_freq
@@ -254,7 +254,7 @@ class EDNNTrainer(nn.Module):
 
     def solve_head(self, phi_theta, u0, reg: float = 1e-5):
         n_eval = phi_theta.shape[0]
-        n_features = phi_theta.shape[1]
+        #n_features = phi_theta.shape[1]
         if u0.dim() == 1:
             u0 = u0.unsqueeze(1)
         Phi = torch.cat(
@@ -266,8 +266,8 @@ class EDNNTrainer(nn.Module):
             A += reg_matrix
         b = Phi.T @ u0
         w_b = torch.linalg.solve(A, b)
-        w = w_b[:-1].detach()
-        b = w_b[-1].detach()
+        w = w_b[:-1]
+        b = w_b[-1]
         return w, b
 
     def head_tuning(self, params, x0_in, u0_in, initial_equation=None, hreg: float = 1e-5, N=100000):
@@ -281,10 +281,10 @@ class EDNNTrainer(nn.Module):
         else:
             x0 = torch.from_numpy(x0_in).to(device=self.device, dtype=self.dtype)
             u0 = torch.from_numpy(u0_in).to(device=self.device, dtype=self.dtype)
-        with torch.no_grad():
-            phi_theta = self.ednn(x0, params, hidden=True)
-        with torch.no_grad():
-            predicted_u0 = self.ednn(x0, params)
+        
+        phi_theta = self.ednn(x0, params, hidden=True)
+        
+        predicted_u0 = self.ednn(x0, params)
         initial_loss = nn.functional.mse_loss(predicted_u0, u0)
         self.logger(f"[{datetime.datetime.now()}] EDNN, Initial Loss: {initial_loss.item():.6e}")
         w, b = self.solve_head(phi_theta, u0, hreg)
@@ -293,8 +293,8 @@ class EDNNTrainer(nn.Module):
         biases[-1].copy_(b)
         params = self.ednn.mlp.concat_params(weights, biases)
         params = nn.Parameter(params)
-        with torch.no_grad():
-            predicted_u0 = self.ednn(x0, params)
+        
+        predicted_u0 = self.ednn(x0, params)
         final_loss = nn.functional.mse_loss(predicted_u0, u0)
         self.logger(f"[{datetime.datetime.now()}] EDNN, Final Loss: {final_loss.item():.6e}")
         self.logger(f"[{datetime.datetime.now()}] EDNN, Head tuning finished.")
@@ -302,20 +302,32 @@ class EDNNTrainer(nn.Module):
     
     def I_1(self, u, x):
         return u.sum(dim=-1)
+    
+    def I_2(self, u, x):
+        return (u**2).sum(dim=-1)
 
     def get_nabla_I(self, u_q, I):
+        #勾配u_qとメソッドIを受け取り、\int^\infty_{-\infty}I(u_q)dxのモンテカルロ近似を返す
         x_samples = self.ednn.get_random_sampling_points(2000).to(device=self.device, dtype=self.dtype)
         I_values = I(u_q, x_samples)
+        domain_measure = 1.0
+        for d in range(self.ednn.x_range.shape[0]):
+            lo_ = self.ednn.x_range[d, 0].item()
+            hi_ = self.ednn.x_range[d, 1].item()
+            domain_measure *= (hi_ - lo_)
         
-        return I_values
-        
+        # 4) 平均 × 領域サイズ → 積分値
+        nabla_I = I_values.mean() * domain_measure
+        return nabla_I
 
     def get_b(self, deriv, u_q):
-        b = u_q * deriv
+        deriv = deriv.squeeze(0)
+        b = torch.dot(deriv, u_q)
         return b
         
 
     def get_lambda(self, deriv, u_q):
+        b = self.get_b(deriv, u_q)
         nabla_I= self.get_nabla_I(u_q, )
         
         return nabla_I
@@ -348,8 +360,13 @@ class EDNNTrainer(nn.Module):
             ret = torch.linalg.lstsq(J.cpu(), u_t.cpu(), driver="gelsd")
             deriv = ret.solution.to(device=J.device)
         else:
-            M = torch.einsum("dki,dkj->dij", (J, J))
+            M = torch.einsum("dki,dkj->dij", (J, J))    #torch.Size([1, 2971, 2971])
             a = torch.einsum("dki,dk->di", (J, u_t))
+            if conserved:
+                u_q = torch.autograd.grad(self.ednn(x, params), params, grad_outputs=torch.ones_like(self.ednn(x, params)), create_graph=True)[0]
+                #u_q torch.Size([2971])
+                nabla_I = self.get_nabla_I(u_q = u_q, I = self.I_1)
+                
             if method == "inversion":
                 assert reg == 0.0
                 M_inv = torch.linalg.inv(M)
@@ -417,10 +434,9 @@ class EDNNTrainer(nn.Module):
         if conserved:
             # u_current は self.ednn(x, params) で計算
             u_current = params_to_u(params)
-            u_q = torch.autograd.grad(self.ednn(x, params), params, grad_outputs=torch.ones_like(self.ednn(x, params)), create_graph=True)
-            print("u_q", u_q.shape)
-            print("deriv", deriv.shape)
-            
+            u_q = torch.autograd.grad(self.ednn(x, params), params, grad_outputs=torch.ones_like(self.ednn(x, params)), create_graph=True)[0]
+            #u_q torch.Size([2971])
+            #deriv torch.Size([1, 2971])
             lambda_ = self.get_lambda(deriv, u_q)
             a = a - lambda_ * u_current
             
@@ -440,8 +456,8 @@ class EDNNTrainer(nn.Module):
         assert reg >= 0.0
         x0 = self.x0
         x0 = torch.from_numpy(x0).to(device=self.device, dtype=self.dtype)
-        with torch.no_grad():
-            u0 = self.ednn(x0, params_pre, hidden=False)
+        
+        u0 = self.ednn(x0, params_pre, hidden=False)
         u0 = u0.to(device=self.device, dtype=self.dtype)
         dataset = torch.utils.data.TensorDataset(x0, u0)
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
@@ -500,7 +516,7 @@ class EDNNTrainer(nn.Module):
         assert x_eval is None or n_eval == 0
         if x_eval is None:
             x_eval = self.ednn.get_random_sampling_points(n_eval).to(device=self.device, dtype=self.dtype)
-        deriv = self.get_time_derivative(equation, state, method=method, x=x_eval, reg=reg, conserved=False)
+        deriv = self.get_time_derivative(equation, state, method=method, x=x_eval, reg=reg, conserved=True)
         return deriv
 
     def integrate(self, params, equation, method, solver, t_eval, x_eval=None, n_eval: int = 0, reg: float = 0.0, atol: float = 1e-3, rtol: float = 1e-3):

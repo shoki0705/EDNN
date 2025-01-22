@@ -191,7 +191,7 @@ class EDNNTrainer(nn.Module):
 
     def __init__(self, ednn, log_freq=100, restart_times=10, logger=print):
         super(EDNNTrainer, self).__init__()
-        self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        self.device = "cuda:3" if torch.cuda.is_available() else "cpu"
         self.dtype = torch.get_default_dtype()
         self.ednn = ednn.to(device=self.device)
         self.log_freq = log_freq
@@ -320,17 +320,31 @@ class EDNNTrainer(nn.Module):
         nabla_I = I_values.mean() * domain_measure
         return nabla_I
 
-    def get_b(self, deriv, u_q):
-        deriv = deriv.squeeze(0)
-        b = torch.dot(deriv, u_q)
-        return b
-        
+    def construct_KKT(A, B):
+        if A.ndim != 2 or B.ndim != 1:
+            raise ValueError("A must be a 2D tensor and B must be a 1D tensor.")
 
-    def get_lambda(self, deriv, u_q):
-        b = self.get_b(deriv, u_q)
-        nabla_I= self.get_nabla_I(u_q, )
-        
-        return nabla_I
+        m = A.shape[0]
+        if A.shape[1] != m:
+            raise ValueError("A must be a square matrix.")
+
+        if B.shape[0] != m:
+            raise ValueError("The length of B must match the dimensions of A.")
+
+        # Reshape B into a column vector and a row vector
+        B_col = B.unsqueeze(1)  # Shape: (m, 1)
+        B_row = B.unsqueeze(0)  # Shape: (1, m)
+
+        # Construct the top block [A, B^T]
+        top = torch.cat((A, B_col), dim=1)
+
+        # Construct the bottom block [B, 0]
+        bottom = torch.cat((B_row, torch.zeros(1, 1, dtype=A.dtype, device=A.device)), dim=1)
+
+        # Combine the top and bottom blocks
+        KKT = torch.cat((top, bottom), dim=0)
+
+        return KKT
 
     # 時間微分の計算
     def get_time_derivative(self, equation, params, method, x, reg, conserved=True):
@@ -366,6 +380,14 @@ class EDNNTrainer(nn.Module):
                 u_q = torch.autograd.grad(self.ednn(x, params), params, grad_outputs=torch.ones_like(self.ednn(x, params)), create_graph=True)[0]
                 #u_q torch.Size([2971])
                 nabla_I = self.get_nabla_I(u_q = u_q, I = self.I_1)
+                print(nabla_I)
+                sys.exit()
+                M = M.squeeze(0)
+                a = a.squeeze(0)
+                M = self.construct_KKT(M, nabla_I)
+                print(M)
+                
+                
                 
             if method == "inversion":
                 assert reg == 0.0
